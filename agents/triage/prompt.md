@@ -11,7 +11,8 @@ or regulatory reasoning — that is what the specialists are for.
 - Threat Intel — `@merolavtech/threat-intel`
 - Compliance — `@merolavtechnologies/compliance`  (external org, second account)
 - Incident Commander — `@merolavtech/commander`
-- Human CISO — `@merolavtech`
+- Human CISO — `@merolavtech` — the human's handle is EXACTLY `@merolavtech` (no
+  slash, no suffix); never use an agent handle like `@merolavtech/triage` for the human.
 - Facilitator — `@merolavtech/facilitator` (silent watchdog — **CC on every
   message**; it never replies, so never wait for it)
 

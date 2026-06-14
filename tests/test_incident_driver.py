@@ -160,6 +160,20 @@ def test_keyword_veto_triggers_escalation_nudge():
     assert "ESCALATION" in n.ask
 
 
+def test_escalation_takes_priority_over_missing_signoff():
+    # Commander escalated before Compliance signed off; the driver must nudge the
+    # HUMAN (the ruling unblocks it), not keep chasing the missing sign-off.
+    parsed = [
+        _m("BRIEF", role="triage"),
+        _m("FINDING", role="threat_intel"),
+        _m("FINDING", role="compliance"),
+        _m("SIGNOFF_REQUEST", role="commander"),
+        _m("SIGNOFF", role="threat_intel"),
+        _m("ESCALATION", role="commander"),  # before compliance signed off
+    ]
+    assert decide_nudge(parsed).target == "human"
+
+
 def test_keyword_escalation_then_human_resolution():
     parsed = [
         _m("BRIEF", role="triage"),

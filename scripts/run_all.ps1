@@ -50,7 +50,13 @@ param(
     [switch]$Check,
     [switch]$Stop,
     [switch]$Force,
-    [int]$TimeoutSec = 90
+    [int]$TimeoutSec = 90,
+    # Override the Commander's model for this run. The Commander defaults to the
+    # cheap claude-haiku-4-5, which is flaky at the action-execution phase (it can
+    # loop on sign-offs instead of calling its action tools). Pass
+    # -CommanderModel claude-sonnet-4-6 for a decisive, hands-off execution at
+    # higher cost. Sets COMMANDER_MODEL for the launched Commander process.
+    [string]$CommanderModel = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -175,6 +181,13 @@ function Invoke-Check {
 function Start-All {
     if (-not (Test-Path $Python)) {
         throw "venv python not found at $Python -- create it / run from the repo with .venv present."
+    }
+
+    # Per-run Commander model override (e.g. claude-sonnet-4-6 for decisive
+    # execution). Child processes inherit this env var from Start-Process.
+    if ($CommanderModel) {
+        $env:COMMANDER_MODEL = $CommanderModel
+        Write-Host "[run_all] Commander model override: $CommanderModel" -ForegroundColor Cyan
     }
 
     $existing = Read-Pids

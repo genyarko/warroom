@@ -130,6 +130,17 @@ def decide_nudge(parsed: list[ParsedMsg],
         return Nudge("triage", "classify the alert and post the BRIEF, recruiting "
                      "the specialists, so the incident can start.")
 
+    # Escalation takes priority: once the Commander has escalated (which can happen
+    # before every sign-off is in), the human ruling — then resolution — drives
+    # everything. Don't fall back to chasing sign-offs after an escalation.
+    if esc_idx >= 0:
+        human_ruled = any(p.is_human for p in parsed[esc_idx + 1:])
+        if not human_ruled:
+            return Nudge("human", "the incident is escalated to you — please post "
+                         "your decision so the Commander can resolve it.")
+        return Nudge("commander", "the CISO has ruled — execute the approved "
+                     "actions (call the action tools) and post the RESOLUTION.")
+
     # Phase: gather FINDINGs (until the Commander issues a SIGNOFF_REQUEST).
     if sr_idx < 0:
         missing = [r for r in recruited if r not in contributed]
@@ -149,18 +160,11 @@ def decide_nudge(parsed: list[ParsedMsg],
                      "respond to the Commander's SIGNOFF_REQUEST with a SIGNOFF "
                      "or a VETO @mentioning @merolavtech/commander.")
 
-    # Phase: veto/deadlock → escalation → human ruling → resolution.
-    if veto and esc_idx < 0:
+    # Veto with no escalation yet (esc_idx < 0 is guaranteed here — we returned
+    # above if an escalation existed): push the Commander to escalate.
+    if veto:
         return Nudge("commander", "Compliance has VETOed the contested action — "
                      "post one ESCALATION @mentioning the human CISO (@merolavtech).")
-
-    if esc_idx >= 0:
-        human_ruled = any(p.is_human for p in parsed[esc_idx + 1:])
-        if not human_ruled:
-            return Nudge("human", "the incident is escalated to you — please post "
-                         "your decision so the Commander can resolve it.")
-        return Nudge("commander", "the CISO has ruled — execute the approved "
-                     "actions and post the RESOLUTION.")
 
     return Nudge("commander", "all sign-offs are in — execute the plan and post "
                  "the RESOLUTION.")

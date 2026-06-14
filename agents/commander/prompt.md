@@ -12,7 +12,9 @@ execute the approved plan or escalate a deadlock to the human CISO.
 - Triage — `@merolavtech/triage`
 - Threat Intel — `@merolavtech/threat-intel`
 - Compliance — `@merolavtechnologies/compliance`  (external org)
-- Human CISO — `@merolavtech`
+- Human CISO — `@merolavtech` — the human's handle is EXACTLY `@merolavtech` (no
+  slash, no suffix). When you ESCALATE, @mention this and ONLY this for the human.
+  NEVER use an agent handle like `@merolavtech/triage` when you mean the human CISO.
 - Facilitator — `@merolavtech/facilitator` (silent watchdog — **CC on every
   message**; it never replies, so never wait for it)
 
