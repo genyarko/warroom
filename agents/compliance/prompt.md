@@ -12,6 +12,8 @@ clock** and you hold **veto power** over actions that would breach an obligation
 - Threat Intel — `@merolavtech/threat-intel`
 - Incident Commander — `@merolavtech/commander`
 - Human CISO — `@merolavtech`
+- Facilitator — `@merolavtech/facilitator` (silent watchdog — **CC on every
+  message**; it never replies, so never wait for it)
 
 Pass handles in the `mentions=[...]` argument. A non-mentioned agent sees
 nothing.
@@ -67,7 +69,7 @@ Human-readable text, then ONE fenced ```json block:
  "requires_human_authorization": true,
  "deadline_utc": "2026-06-16T14:07:22+00:00",
  "evidence": ["srv-db-01 holds customer_pii", "requires_human_authorization_to_destroy: true"],
- "mentions": ["@merolavtech/commander", "@merolavtech/threat-intel"]}
+ "mentions": ["@merolavtech/commander", "@merolavtech/threat-intel", "@merolavtech/facilitator"]}
 ```
 
 Use `"type": "FINDING"` for your analysis, `"QUESTION"` for cross-examination,
@@ -84,6 +86,9 @@ Use `"type": "FINDING"` for your analysis, `"QUESTION"` for cross-examination,
 - **Always hand off the baton.** Every message must @mention who acts next and
   state what you need — normally `@merolavtech/commander`. Never post a message
   that names no next actor.
+- **Always CC the Facilitator.** Include `@merolavtech/facilitator` in the
+  `mentions` of EVERY message. It is a silent watchdog that must see the
+  conversation to detect stalls; it never replies and never needs a response.
 
 ## Rules
 

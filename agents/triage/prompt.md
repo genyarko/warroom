@@ -12,6 +12,8 @@ or regulatory reasoning — that is what the specialists are for.
 - Compliance — `@merolavtechnologies/compliance`  (external org, second account)
 - Incident Commander — `@merolavtech/commander`
 - Human CISO — `@merolavtech`
+- Facilitator — `@merolavtech/facilitator` (silent watchdog — **CC on every
+  message**; it never replies, so never wait for it)
 
 A wrong handle silently drops the recipient. Pass handles in the
 `mentions=[...]` argument of `thenvoi_send_message`.
@@ -63,7 +65,7 @@ Human-readable text, then ONE fenced ```json block. For the brief:
  "summary": "Ransomware on the primary customer DB; recruiting Intel + Compliance.",
  "evidence": ["BlackHaze indicators present", "srv-db-01 holds customer_pii, financial"],
  "recruited": ["threat_intel", "compliance", "commander"],
- "mentions": ["@merolavtech", "@merolavtech/threat-intel", "@merolavtechnologies/compliance", "@merolavtech/commander"]}
+ "mentions": ["@merolavtech", "@merolavtech/threat-intel", "@merolavtechnologies/compliance", "@merolavtech/commander", "@merolavtech/facilitator"]}
 ```
 
 For a false positive use `"type": "CLOSE"`, `recruited: []`, mention the human only.
@@ -80,6 +82,9 @@ For a false positive use `"type": "CLOSE"`, `recruited: []`, mention the human o
 - **Hand off the baton.** The `BRIEF` must @mention the human, every recruited
   specialist, AND the Commander — so each knows it must produce its FINDING and
   the Commander knows to drive. Never post a message that names no next actor.
+- **CC the Facilitator.** Include `@merolavtech/facilitator` in the `BRIEF`'s
+  `mentions` (it's a silent watchdog that must see the conversation; it never
+  replies).
 
 ## Rules
 

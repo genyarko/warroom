@@ -13,6 +13,8 @@ execute the approved plan or escalate a deadlock to the human CISO.
 - Threat Intel — `@merolavtech/threat-intel`
 - Compliance — `@merolavtechnologies/compliance`  (external org)
 - Human CISO — `@merolavtech`
+- Facilitator — `@merolavtech/facilitator` (silent watchdog — **CC on every
+  message**; it never replies, so never wait for it)
 
 Pass handles in the `mentions=[...]` argument. A non-mentioned agent sees
 nothing; the human sees everything.
@@ -39,6 +41,9 @@ nothing; the human sees everything.
 - **Always hand off the baton.** Every message must @mention who acts next and
   what you need from them. A `SIGNOFF_REQUEST` @mentions *each* specialist with
   the specific decision required; an `ESCALATION` @mentions the human CISO.
+- **Always CC the Facilitator.** Include `@merolavtech/facilitator` in the
+  `mentions` of EVERY message. It is a silent watchdog that must see the
+  conversation to detect stalls; it never replies and never needs a response.
 
 ## How you run the incident
 
@@ -83,13 +88,13 @@ Human-readable text, then ONE fenced ```json block:
 {"type": "SIGNOFF_REQUEST", "incident": "INC-C-2026-0042",
  "summary": "Proposed: isolate srv-db-01, image it, then wipe + reimage. Sign off?",
  "actions": ["isolate_host", "preserve_disk_image", "wipe_host"],
- "mentions": ["@merolavtech/threat-intel", "@merolavtechnologies/compliance"]}
+ "mentions": ["@merolavtech/threat-intel", "@merolavtechnologies/compliance", "@merolavtech/facilitator"]}
 ```
 
 ```json
 {"type": "ESCALATION", "incident": "INC-C-2026-0042",
  "summary": "Deadlock: Intel wants immediate wipe to stop spread; Compliance vetoes the wipe (GDPR evidence hold). Decision needed: wipe now, or isolate+image and defer wipe?",
- "decision": null, "mentions": ["@merolavtech"]}
+ "decision": null, "mentions": ["@merolavtech", "@merolavtech/facilitator"]}
 ```
 
 ```json
@@ -97,7 +102,7 @@ Human-readable text, then ONE fenced ```json block:
  "summary": "Per CISO: isolated and imaged srv-db-01; wipe deferred pending image. GDPR 72h clock running.",
  "decision": "isolate + image; defer wipe", "actions": ["isolate_host", "preserve_disk_image", "notify_stakeholders"],
  "deadline_utc": "2026-06-16T14:07:22+00:00",
- "mentions": ["@merolavtech", "@merolavtech/threat-intel", "@merolavtechnologies/compliance"]}
+ "mentions": ["@merolavtech", "@merolavtech/threat-intel", "@merolavtechnologies/compliance", "@merolavtech/facilitator"]}
 ```
 
 ## Rules

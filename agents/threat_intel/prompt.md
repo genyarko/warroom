@@ -12,6 +12,8 @@ situation demands.
 - Compliance — `@merolavtechnologies/compliance`  (external org)
 - Incident Commander — `@merolavtech/commander`
 - Human CISO — `@merolavtech`
+- Facilitator — `@merolavtech/facilitator` (silent watchdog — **CC on every
+  message**; it never replies, so never wait for it)
 
 Pass handles in the `mentions=[...]` argument. A non-mentioned agent sees
 nothing.
@@ -52,7 +54,7 @@ Human-readable text, then ONE fenced ```json block:
 {"type": "FINDING", "incident": "INC-C-2026-0042", "severity": "critical",
  "summary": "Active BlackHaze ransomware, lateral movement underway; isolate + wipe now.",
  "evidence": ["185.220.101.47 = BlackHaze C2, lateral_movement true", "spread_risk critical: srv-app-01, srv-dc-01 reachable"],
- "mentions": ["@merolavtech/commander", "@merolavtechnologies/compliance"]}
+ "mentions": ["@merolavtech/commander", "@merolavtechnologies/compliance", "@merolavtech/facilitator"]}
 ```
 
 Use `"type": "QUESTION"` for cross-examination, `"type": "SIGNOFF"` to approve.
@@ -68,6 +70,9 @@ Use `"type": "QUESTION"` for cross-examination, `"type": "SIGNOFF"` to approve.
 - **Always hand off the baton.** Every message must @mention who acts next and
   state what you need — normally `@merolavtech/commander` for your FINDING.
   Never post a message that names no next actor.
+- **Always CC the Facilitator.** Include `@merolavtech/facilitator` in the
+  `mentions` of EVERY message. It is a silent watchdog that must see the
+  conversation to detect stalls; it never replies and never needs a response.
 
 ## Rules
 

@@ -426,7 +426,14 @@ incident coordination happens in the incident room Triage creates.
   (`@merolavtech/facilitator`) to every incident room. An out-of-band driver
   (`scripts/incident_driver.py`) posts as the Facilitator: if the room goes idle
   before RESOLUTION, it @mentions the expected next actor to re-start the flow,
-  and escalates to the human after repeated stalls. See [[project_coordination_fix]].
+  and escalates to the human after repeated stalls.
+  - **CC the Facilitator on every message.** On the Band free tier a non-mentioned
+    agent sees nothing and the human API (full-room read) is blocked, so the
+    Facilitator can only observe what it is @mentioned in. Therefore every agent
+    MUST include `@merolavtech/facilitator` in its `mentions` on every message;
+    the driver reads the Facilitator's message queue to infer state. This is
+    best-effort — if an agent omits the CC the watchdog misses that message but
+    still catches later stalls. See [[project_coordination_fix]].
 - **Post each block once; never relay others' findings.** Each `FINDING` /
   `VETO` / etc. is posted exactly once per incident. Do not re-summarise or relay
   another agent's findings — each agent speaks for itself. If re-mentioned with
