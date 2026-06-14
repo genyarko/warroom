@@ -1,0 +1,216 @@
+"""Compliance domain tools.
+
+Three tools, all reading ``shared/mock_env/reg_rules.json`` + the asset
+inventory:
+
+  * ``check_regulatory_triggers`` — which notification regimes (GDPR/SEC/HIPAA)
+    an incident triggers, based on the affected host's data classes.
+  * ``start_notification_clock`` — turn a triggered rule into a concrete
+    deadline timestamp (the regulatory-clock drama in Phase 5 builds on this).
+  * ``evidence_preservation_requirements`` — whether a forensically sound image
+    must be captured before destructive remediation. This is the basis for
+    Compliance's veto of a wipe on a PII host.
+
+Layering matches the other agents: pure functions + a ``pydantic_ai_tools()``
+builder. The Pydantic AI adapter registers tools via ``agent.tool(fn)``, which
+requires a ``RunContext`` first parameter — so the wrappers take ``ctx`` and
+ignore it; the pure functions below do the real work and are unit-tested
+directly.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+from pydantic_ai import RunContext
+
+from shared.mock_data import get_asset, load_alert, load_reg_rules
+
+
+def _affected_data_classes(incident: str) -> tuple[str, list[str]]:
+    """(asset_id, data_classes) for the host named in an incident's alert."""
+    alert = load_alert(incident)
+    asset_id = alert.get("asset_id", "")
+    asset = get_asset(asset_id)
+    return asset_id, (asset.get("data_classes", []) if asset else [])
+
+
+def check_regulatory_triggers(incident: str) -> dict[str, Any]:
+    """Return the regulatory obligations an incident triggers.
+
+    Matches the affected host's data classes against every rule's trigger and
+    returns the obligation, deadline, and evidence-preservation flag for each
+    match.
+    """
+    asset_id, data_classes = _affected_data_classes(incident)
+    dc = set(data_classes)
+
+    triggered = []
+    for rule in load_reg_rules():
+        trigger_classes = set(rule.get("trigger", {}).get("data_classes", []))
+        matched = sorted(dc & trigger_classes)
+        if matched:
+            triggered.append({
+                "rule_id": rule["rule_id"],
+                "name": rule["name"],
+                "jurisdiction": rule["jurisdiction"],
+                "matched_data_classes": matched,
+                "obligation": rule["obligation"],
+                "deadline": rule["deadline"],
+                "evidence_preservation_required": rule.get(
+                    "evidence_preservation_required", False),
+                "authority": rule.get("authority"),
+            })
+
+    return {
+        "incident": incident,
+        "asset_id": asset_id,
+        "data_classes": sorted(dc),
+        "triggered": triggered,
+        "any_evidence_preservation_required": any(
+            t["evidence_preservation_required"] for t in triggered),
+        "summary": (
+            f"{len(triggered)} regulatory obligation(s) triggered."
+            if triggered else
+            "No notification regimes triggered by this asset's data classes."
+        ),
+    }
+
+
+def _add_business_days(start: datetime, days: int) -> datetime:
+    """Add N business days, skipping Saturdays and Sundays."""
+    current = start
+    remaining = days
+    while remaining > 0:
+        current = current + timedelta(days=1)
+        if current.weekday() < 5:  # Mon-Fri
+            remaining -= 1
+    return current
+
+
+def start_notification_clock(
+    regulation: str, incident: str, now: datetime | None = None
+) -> dict[str, Any]:
+    """Compute the deadline for a regulation and start its notification clock.
+
+    ``regulation`` may be a rule_id (e.g. 'GDPR-ART-33') or part of a rule name.
+    ``now`` defaults to the current UTC time (parameterised for testing).
+    """
+    now = now or datetime.now(timezone.utc)
+    reg_key = regulation.strip().lower()
+
+    rule = None
+    for r in load_reg_rules():
+        if r["rule_id"].lower() == reg_key or reg_key in r["name"].lower():
+            rule = r
+            break
+    if rule is None:
+        return {"regulation": regulation, "started": False,
+                "error": f"no regulatory rule matching '{regulation}'"}
+
+    deadline = rule["deadline"]
+    value, unit = deadline["value"], deadline["unit"]
+    if unit == "hours":
+        deadline_dt = now + timedelta(hours=value)
+    elif unit == "days":
+        deadline_dt = now + timedelta(days=value)
+    elif unit == "business_days":
+        deadline_dt = _add_business_days(now, value)
+    else:  # "immediate"
+        deadline_dt = now
+
+    return {
+        "regulation": rule["rule_id"],
+        "name": rule["name"],
+        "incident": incident,
+        "started": True,
+        "started_utc": now.isoformat(),
+        "deadline_utc": deadline_dt.isoformat(),
+        "window": f"{value} {unit}",
+        "obligation": rule["obligation"],
+        "authority": rule.get("authority"),
+    }
+
+
+def evidence_preservation_requirements(asset_id: str) -> dict[str, Any]:
+    """Return forensic evidence-preservation requirements for a host.
+
+    If the host holds regulated data, a forensically sound disk image and a
+    volatile-memory capture must be taken BEFORE any destructive remediation
+    (wipe/reimage). This is what justifies blocking a wipe.
+    """
+    asset = get_asset(asset_id)
+    if asset is None:
+        return {"asset_id": asset_id, "found": False,
+                "error": f"asset '{asset_id}' not in inventory"}
+
+    data_classes = set(asset.get("data_classes", []))
+    triggering_rules = [
+        {"rule_id": r["rule_id"], "name": r["name"]}
+        for r in load_reg_rules()
+        if r.get("evidence_preservation_required")
+        and data_classes & set(r.get("trigger", {}).get("data_classes", []))
+    ]
+    required = bool(triggering_rules)
+
+    return {
+        "asset_id": asset_id,
+        "found": True,
+        "data_classes": sorted(data_classes),
+        "preservation_required": required,
+        "blocks_destructive_actions": ["wipe_host", "reimage"] if required else [],
+        "required_artifacts": (
+            ["forensic disk image", "volatile memory capture"] if required else []),
+        "triggering_rules": triggering_rules,
+        "rationale": (
+            "Host holds regulated data; destroying it before imaging risks "
+            "spoliation and breaks the notification evidence chain. Preserve "
+            "before any wipe/reimage."
+            if required else
+            "No regulated data on this host; standard remediation may proceed "
+            "without a mandatory forensic image."
+        ),
+    }
+
+
+# --- Framework wiring ------------------------------------------------------
+
+# Module-level aliases so the nested Pydantic AI wrappers can call the pure
+# functions without the inner ``def`` shadowing the name (Python function-scope
+# would otherwise make the bare name a local).
+_triggers_impl = check_regulatory_triggers
+_clock_impl = start_notification_clock
+_evidence_impl = evidence_preservation_requirements
+
+
+def pydantic_ai_tools() -> list[Any]:
+    """Pydantic-AI-compatible tool callables for the adapter (additional_tools).
+
+    The adapter registers these with ``agent.tool``, which passes a RunContext
+    as the first argument — accepted and ignored here.
+    """
+
+    def check_regulatory_triggers(ctx: RunContext, incident: str) -> str:
+        """Return the notification regimes (GDPR/SEC/HIPAA) an incident triggers,
+        based on the affected host's data classes. Pass the incident id/alias
+        (e.g. 'INC-C')."""
+        return json.dumps(_triggers_impl(incident), indent=2, default=str)
+
+    def start_notification_clock(ctx: RunContext, regulation: str, incident: str) -> str:
+        """Start the statutory notification clock for a regulation and return its
+        deadline timestamp. 'regulation' is a rule_id (e.g. 'GDPR-ART-33')."""
+        return json.dumps(_clock_impl(regulation, incident), indent=2, default=str)
+
+    def evidence_preservation_requirements(ctx: RunContext, asset_id: str) -> str:
+        """Return whether a forensic image must be preserved before destructive
+        remediation on a host (e.g. 'srv-db-01'). Use this to justify blocking a
+        wipe."""
+        return json.dumps(_evidence_impl(asset_id), indent=2, default=str)
+
+    return [
+        check_regulatory_triggers,
+        start_notification_clock,
+        evidence_preservation_requirements,
+    ]

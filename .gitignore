@@ -1,0 +1,14 @@
+.env
+.env.local
+agent_config.yaml
+__pycache__/
+*.pyc
+.venv/
+.uv/
+*.egg-info/
+actions_log.jsonl
+*.log
+install_log.txt
+exports/
+*.mp4
+.DS_Store
