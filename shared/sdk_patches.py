@@ -36,31 +36,74 @@ _LOOP_GUARD_THRESHOLD = 5
 
 _APPLIED = False
 
-# Cache of the standard incident-team handles (specialists + commander +
-# facilitator), loaded from agent_config. Used by the deterministic recruiter.
-_TEAM_CACHE: list[str] | None = None
+import re as _re
+
+# role -> Band handle, loaded from agent_config (cached).
+_ROLE_HANDLES: dict[str, str] | None = None
+# Default team if the incident can't be determined (safe superset).
+_DEFAULT_ROLES = {"threat_intel", "compliance", "commander", "facilitator"}
+_INC_RE = _re.compile(r"INC-[ABC]", _re.IGNORECASE)
 
 
-def _warroom_team() -> list[str]:
-    """Handles to recruit into an incident room (the human is already present in
-    the alert room on the free-tier paste flow, so it's not added here)."""
-    global _TEAM_CACHE
-    if _TEAM_CACHE is not None:
-        return _TEAM_CACHE
-    handles: list[str] = []
+def _role_handles() -> dict[str, str]:
+    global _ROLE_HANDLES
+    if _ROLE_HANDLES is not None:
+        return _ROLE_HANDLES
+    out: dict[str, str] = {}
     try:
         from shared.config import load_agent
-        for role in ("threat_intel", "compliance", "commander", "facilitator"):
+        for role in ("triage", "threat_intel", "compliance", "commander", "facilitator"):
             try:
                 h = load_agent(role).handle
                 if h:
-                    handles.append(h)
+                    out[role] = h
             except Exception:  # noqa: BLE001 - role may be absent
                 pass
     except Exception:  # noqa: BLE001
         pass
-    _TEAM_CACHE = handles
-    return handles
+    _ROLE_HANDLES = out
+    return out
+
+
+def _extract_incident(text) -> str | None:
+    """Pull an INC-A/B/C alias out of any string (room name, task_id, content)."""
+    if not text:
+        return None
+    m = _INC_RE.search(str(text))
+    return m.group(0).upper() if m else None
+
+
+async def _incident_from_room(tools) -> str | None:
+    """Fallback: find the incident id from the alert in the current room."""
+    try:
+        resp = await tools.rest.agent_api_context.get_agent_chat_context(
+            chat_id=tools.room_id, page=1, page_size=50)
+        for item in (resp.data or []):
+            inc = _extract_incident(getattr(item, "content", "") or "")
+            if inc:
+                return inc
+    except Exception as e:  # noqa: BLE001
+        logger.warning("recruit: could not read room for incident id: %s", e)
+    return None
+
+
+async def _recommended_roles(tools, task_id) -> set[str]:
+    """Roles to recruit for this incident — reasoned from classify_alert, not
+    hardcoded. Resolves the incident from task_id (what Triage passes to
+    create_chatroom) or, failing that, from the alert in the room."""
+    inc = _extract_incident(task_id) or await _incident_from_room(tools)
+    if inc:
+        try:
+            from agents.triage.tools import classify_alert
+            res = classify_alert(inc)
+            if res.get("disposition") == "close":
+                return set()  # false positive: recruit nobody
+            roles = set(res.get("recommended_specialists") or [])
+            if roles:
+                return roles | {"commander", "facilitator"}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("recruit: classify_alert(%s) failed: %s", inc, e)
+    return set(_DEFAULT_ROLES)  # safe fallback
 
 
 def _is_422(exc: Exception) -> bool:
@@ -161,7 +204,7 @@ def apply_sdk_patches() -> None:
 
     ExecutionContext._get_next_message = _get_next_message
 
-    # --- Fix 3: deterministic recruitment via create_chatroom ----------------
+    # --- Fix 3: reasoned, deterministic recruitment via create_chatroom ------
     # Verified in the SDK: create_chatroom() makes an ORPHAN room —
     # add_participant()/send_message() are hard-bound to self.room_id (the room
     # where the agent received the message, which on the free-tier paste flow
@@ -169,23 +212,30 @@ def apply_sdk_patches() -> None:
     # the "created" rooms were never used, and they let gpt-4o Triage fragment the
     # team. gpt-4o reliably CALLS create_chatroom but unreliably calls
     # add_participant — so we repurpose create_chatroom: instead of an unused
-    # orphan, it deterministically recruits the standard team into the CURRENT
-    # room (idempotently) and returns self.room_id. Triage then only needs:
-    # classify -> create_chatroom (auto-recruits) -> post the BRIEF.
+    # orphan, it recruits — IN CODE, idempotently — exactly the specialists this
+    # incident needs (classify_alert's recommended_specialists, + commander +
+    # facilitator), then returns self.room_id. Reasoned (not hardcoded), so INC-A
+    # gets no Compliance and INC-C does. Triage then only needs:
+    # classify -> create_chatroom(incident_id) (auto-recruits) -> post the BRIEF.
     from thenvoi.runtime.tools import AgentTools
 
     async def create_chatroom(self, task_id=None):
         if getattr(self, "_wr_recruited", False):
             return self.room_id  # idempotent: team already recruited
         self._wr_recruited = True
+        handles = _role_handles()
+        roles = await _recommended_roles(self, task_id)
         added = []
-        for handle in _warroom_team():
+        for role in sorted(roles):
+            handle = handles.get(role)
+            if not handle:
+                continue
             try:
                 await self.add_participant(handle)
-                added.append(handle)
+                added.append(role)
             except Exception as e:  # noqa: BLE001 - already-present / lookup errors
                 logger.warning("Recruit: add_participant(%s) failed: %s", handle, e)
-        logger.info("Recruited incident team into room %s: %s", self.room_id, added)
+        logger.info("Recruited %s into room %s", added, self.room_id)
         return self.room_id
 
     AgentTools.create_chatroom = create_chatroom

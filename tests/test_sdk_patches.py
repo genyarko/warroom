@@ -149,10 +149,13 @@ def test_loop_guard_resets_on_distinct_ids():
     assert tracker.perm_failed == []
 
 
-# --- Fix 3: create_chatroom repurposed as deterministic recruiter ----------
+# --- Fix 3: create_chatroom repurposed as a REASONED recruiter -------------
 
 class _RecruitTools:
-    """Stands in for the room-bound AgentTools instance."""
+    """Stands in for the room-bound AgentTools instance (task_id carries the
+    incident, so the room-read fallback isn't exercised)."""
+    rest = None
+
     def __init__(self):
         self.room_id = "alert-room"
         self.added = []
@@ -162,32 +165,54 @@ class _RecruitTools:
         return {"id": identifier}
 
 
-def test_create_chatroom_recruits_team_into_current_room():
+def _stub_handles():
+    # role -> handle, so assertions are independent of agent_config.
+    return {r: f"@x/{r}" for r in
+            ("triage", "threat_intel", "compliance", "commander", "facilitator")}
+
+
+def test_recruiter_is_reasoned_inc_a_excludes_compliance():
     import shared.sdk_patches as P
     from thenvoi.runtime.tools import AgentTools
     P.apply_sdk_patches()
-    team = ["@x/threat-intel", "@x/compliance", "@x/commander", "@x/facilitator"]
-    P._TEAM_CACHE = team
+    P._ROLE_HANDLES = _stub_handles()
     fake = _RecruitTools()
 
-    rid = asyncio.run(AgentTools.create_chatroom(fake, "WarRoom-INC-C"))
+    rid = asyncio.run(AgentTools.create_chatroom(fake, "WarRoom-INC-A"))
 
-    assert rid == "alert-room"          # returns the CURRENT room, not a new one
-    assert fake.added == team           # whole team recruited, deterministically
-    assert fake._wr_recruited is True
+    assert rid == "alert-room"
+    # INC-A roster is [threat_intel, commander] -> no Compliance.
+    assert "@x/compliance" not in fake.added
+    assert "@x/threat_intel" in fake.added
+    assert "@x/commander" in fake.added
+    assert "@x/facilitator" in fake.added  # infra watchdog always
 
 
-def test_create_chatroom_recruit_is_idempotent():
+def test_recruiter_is_reasoned_inc_c_includes_compliance():
     import shared.sdk_patches as P
     from thenvoi.runtime.tools import AgentTools
     P.apply_sdk_patches()
-    P._TEAM_CACHE = ["@x/threat-intel", "@x/compliance"]
+    P._ROLE_HANDLES = _stub_handles()
+    fake = _RecruitTools()
+
+    asyncio.run(AgentTools.create_chatroom(fake, "WarRoom-INC-C-2026-0042"))
+
+    # INC-C roster includes Compliance (PII host).
+    for role in ("threat_intel", "compliance", "commander", "facilitator"):
+        assert f"@x/{role}" in fake.added
+
+
+def test_recruiter_is_idempotent():
+    import shared.sdk_patches as P
+    from thenvoi.runtime.tools import AgentTools
+    P.apply_sdk_patches()
+    P._ROLE_HANDLES = _stub_handles()
     fake = _RecruitTools()
 
     async def run():
-        await AgentTools.create_chatroom(fake)
-        await AgentTools.create_chatroom(fake)  # repeat call (gpt-4o duplicate)
+        await AgentTools.create_chatroom(fake, "INC-C")
+        await AgentTools.create_chatroom(fake, "INC-C")  # gpt-4o duplicate call
         return fake.added
 
     added = asyncio.run(run())
-    assert added == ["@x/threat-intel", "@x/compliance"]  # added once, no dupes
+    assert sorted(added) == sorted(set(added))  # no duplicate adds
