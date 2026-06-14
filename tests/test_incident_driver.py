@@ -12,7 +12,14 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
-from incident_driver import ParsedMsg, decide_nudge, parse_block_type  # noqa: E402
+import types  # noqa: E402
+
+from incident_driver import (  # noqa: E402
+    ParsedMsg,
+    _recruited_specialists,
+    decide_nudge,
+    parse_block_type,
+)
 
 
 def _m(type_=None, role=None, is_human=False, text=""):
@@ -113,6 +120,55 @@ def test_human_ruling_nudges_commander_to_resolve():
     n = decide_nudge(parsed)
     assert n.target == "commander"
     assert "RESOLUTION" in n.ask
+
+
+def test_inc_a_roster_no_compliance_resolves_without_waiting_on_it():
+    # INC-A recruits only Threat Intel. After its sign-off, the driver must nudge
+    # the Commander to execute/resolve — NOT wait on (absent) Compliance.
+    parsed = [
+        _m("BRIEF", role="triage"),
+        _m("FINDING", role="threat_intel"),
+        _m("SIGNOFF_REQUEST", role="commander"),
+        _m("SIGNOFF", role="threat_intel"),
+    ]
+    n = decide_nudge(parsed, recruited=("threat_intel",))
+    assert n.target == "commander"
+    assert "resolution" in n.ask.lower() or "execute" in n.ask.lower()
+
+
+def test_recruited_specialists_reflects_room_participants():
+    roster = {"threat_intel": {"id": "ti"}, "compliance": {"id": "co"}}
+    parts = types.SimpleNamespace(data=[
+        types.SimpleNamespace(id="ti"), types.SimpleNamespace(id="cmd"),
+    ])  # only Threat Intel present (INC-A)
+    client = types.SimpleNamespace(agent_api_participants=types.SimpleNamespace(
+        list_agent_chat_participants=lambda chat_id: parts))
+    assert _recruited_specialists(client, "room", roster) == ("threat_intel",)
+
+
+def test_no_escalation_phrase_is_not_detected_as_escalation():
+    # "no escalation needed" must NOT trip the ESCALATION beat (that false
+    # positive stalled INC-A by routing to the human). After Intel's sign-off the
+    # driver should nudge the Commander to execute/resolve.
+    parsed = [
+        _m("BRIEF", role="triage"),
+        _m(None, role="threat_intel", text="finding: malware contained, no lateral movement"),
+        _m(None, role="commander", text="signoff_request: isolate and clean ws-eng-014"),
+        _m(None, role="threat_intel", text="i sign off on the plan"),
+        _m(None, role="commander", text="no escalation needed; this is fully contained"),
+    ]
+    n = decide_nudge(parsed, recruited=("threat_intel",))
+    assert n.target == "commander"
+    assert "resolution" in n.ask.lower() or "execute" in n.ask.lower()
+
+
+def test_real_escalation_phrase_is_detected():
+    parsed = [
+        _m("BRIEF", role="triage"),
+        _m(None, role="commander",
+           text="**escalation:** wipe authorization required from the ciso"),
+    ]
+    assert decide_nudge(parsed, recruited=("threat_intel",)).target == "human"
 
 
 def test_terminal_states_stop_driving():

@@ -86,7 +86,11 @@ def _beat(p: ParsedMsg, beat: str) -> bool:
     if beat == "VETO":
         return p.role == "compliance" and "veto" in t
     if beat == "ESCALATION":
-        return p.role == "commander" and "escalat" in t
+        # Positive markers only — "no escalation needed" / "does not require
+        # escalation" must NOT count (that false-positive stalled INC-A by routing
+        # to the human for a ruling that wasn't needed).
+        return p.role == "commander" and (
+            "escalation:" in t or "escalating" in t or "escalate to" in t)
     if beat == "RESOLUTION":
         return p.role == "commander" and (
             "incident closed" in t or "incident is closed" in t
@@ -196,6 +200,21 @@ def _list_messages(client, room_id):
         page += 1
     # oldest -> newest
     return sorted(msgs, key=lambda m: getattr(m, "inserted_at", "") or "")
+
+
+def _recruited_specialists(client, room_id, roster) -> tuple[str, ...]:
+    """Which specialist roles are ACTUALLY in this room — so the state machine
+    only waits on specialists that were recruited (INC-A has no Compliance).
+    Falls back to all specialists if participants can't be read."""
+    try:
+        parts = client.agent_api_participants.list_agent_chat_participants(
+            chat_id=room_id).data
+    except Exception:  # noqa: BLE001
+        return SPECIALIST_ROLES
+    ids = {getattr(p, "id", None) for p in parts}
+    present = tuple(r for r in SPECIALIST_ROLES
+                   if roster.get(r, {}).get("id") in ids)
+    return present or SPECIALIST_ROLES
 
 
 def _parse(messages, roster: dict[str, dict]) -> list[ParsedMsg]:
@@ -315,7 +334,8 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(args.poll)
             continue
 
-        nudge = decide_nudge(parsed)
+        recruited = _recruited_specialists(client, room, roster)
+        nudge = decide_nudge(parsed, recruited)
         if nudge is None:
             time.sleep(args.poll)
             continue
