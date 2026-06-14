@@ -22,6 +22,7 @@ from agents.triage.tools import langchain_tools
 from shared.band_logging import LoggingPreprocessor, attach_sdk_logging
 from shared.config import load_agent
 from shared.logging import get_logger, log_event
+from shared.sdk_patches import apply_sdk_patches
 
 
 AGENT_NAME = "triage"
@@ -31,17 +32,25 @@ PROMPT_PATH = Path(__file__).with_name("prompt.md")
 async def main() -> None:
     log = get_logger(AGENT_NAME)
     attach_sdk_logging(AGENT_NAME)
+    apply_sdk_patches()  # band-sdk 0.2.11 ack-loop fixes (see shared/sdk_patches.py)
     log_event(log, "boot", "loading config")
 
     creds = load_agent(AGENT_NAME)
     log_event(log, "config", f"framework={creds.framework} account={creds.account}")
 
     model = os.getenv("TRIAGE_MODEL", "gpt-4o")
+    # Cost guards (cap per-call output + per-message tool-loop turns). Triage's
+    # busiest turn does ~9 tool calls (classify, create_chatroom, lookup_peers,
+    # add_participant x4, send_message x2), so keep recursion_limit comfortably
+    # above that; it only fires on a runaway loop.
+    max_tokens = int(os.getenv("TRIAGE_MAX_TOKENS", "1024"))
+    recursion_limit = int(os.getenv("TRIAGE_RECURSION_LIMIT", "25"))
     custom_section = PROMPT_PATH.read_text(encoding="utf-8")
 
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model=model),
+        llm=ChatOpenAI(model=model, max_tokens=max_tokens),
         checkpointer=InMemorySaver(),
+        recursion_limit=recursion_limit,
         custom_section=custom_section,
         # Domain tools: classify_alert, lookup_asset (Phase 3).
         additional_tools=langchain_tools(),

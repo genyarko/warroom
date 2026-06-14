@@ -413,6 +413,13 @@ incident coordination happens in the incident room Triage creates.
 - **One purposeful message per turn:** post only when you have something new and
   are @mentioned. Never reply to messages that don't @mention you. Always send
   via `thenvoi_send_message`; raw LLM text never reaches the room.
+- **Post each block once; never relay others' findings.** Each `FINDING` /
+  `VETO` / etc. is posted exactly once per incident. Do not re-summarise or relay
+  another agent's findings — each agent speaks for itself. If re-mentioned with
+  nothing new, answer only the specific new `QUESTION` in ≤2 sentences or **send
+  nothing** — silence is correct. (This guards against the duplicate-FINDING
+  blow-up that inflates every agent's per-turn token cost; see
+  [[project_aiml_swap_cost]].)
 
 ### E.5 The scripted conflict (INC-C) — emerges from the data, not a script
 

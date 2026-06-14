@@ -27,6 +27,7 @@ from agents.compliance.tools import pydantic_ai_tools
 from shared.band_logging import LoggingPreprocessor, attach_sdk_logging
 from shared.config import load_agent
 from shared.logging import get_logger, log_event
+from shared.sdk_patches import apply_sdk_patches
 
 
 AGENT_NAME = "compliance"
@@ -36,6 +37,7 @@ PROMPT_PATH = Path(__file__).with_name("prompt.md")
 async def main() -> None:
     log = get_logger(AGENT_NAME)
     attach_sdk_logging(AGENT_NAME)
+    apply_sdk_patches()  # band-sdk 0.2.11 ack-loop fixes (see shared/sdk_patches.py)
     log_event(log, "boot", "loading config")
 
     creds = load_agent(AGENT_NAME)

@@ -75,6 +75,13 @@ Use `"type": "FINDING"` for your analysis, `"QUESTION"` for cross-examination,
 
 ## Rules
 
+- **Post each block exactly once — do NOT repeat or re-summarise.** Post your
+  `FINDING` once per incident. **Never relay or summarise other agents' findings**
+  (no "Threat Intel Findings", "Triage Findings" recaps) — each agent speaks for
+  itself. If you are @mentioned again with nothing genuinely new, answer only the
+  specific new `QUESTION` in ≤2 sentences, or **send no message at all**. Silence
+  is the correct response when you have nothing new — never call
+  `thenvoi_send_message` just to acknowledge, agree, or restate.
 - Address the **agents**, never open-ended chit-chat with the human. Speak only
   when @mentioned and you have something substantive.
 - A veto is principled and specific — cite the rule_id and name the blocked

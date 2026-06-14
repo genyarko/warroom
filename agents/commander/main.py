@@ -20,6 +20,7 @@ from agents.commander.tools import anthropic_tools
 from shared.band_logging import LoggingPreprocessor, attach_sdk_logging
 from shared.config import load_agent
 from shared.logging import get_logger, log_event
+from shared.sdk_patches import apply_sdk_patches
 
 
 AGENT_NAME = "commander"
@@ -29,13 +30,19 @@ PROMPT_PATH = Path(__file__).with_name("prompt.md")
 async def main() -> None:
     log = get_logger(AGENT_NAME)
     attach_sdk_logging(AGENT_NAME)
+    apply_sdk_patches()  # band-sdk 0.2.11 ack-loop fixes (see shared/sdk_patches.py)
     log_event(log, "boot", "loading config")
 
     creds = load_agent(AGENT_NAME)
     log_event(log, "config", f"framework={creds.framework} account={creds.account}")
 
-    # Latest Claude family. Override via env if needed.
-    model = os.getenv("COMMANDER_MODEL", "claude-sonnet-4-6")
+    # Cheap-by-default Claude for cost control while routed through AIML (Sonnet
+    # cost ~1.27M tokens in a single run). Override via env to go back to Sonnet.
+    model = os.getenv("COMMANDER_MODEL", "claude-haiku-4-5-20251001")
+    # Cap output tokens per call (guards against runaway generations). The
+    # Commander's messages (SIGNOFF_REQUEST / ESCALATION / ACTION / RESOLUTION +
+    # tool calls) are short; 1536 leaves headroom without truncating tool_use.
+    max_tokens = int(os.getenv("COMMANDER_MAX_TOKENS", "1536"))
     custom_section = PROMPT_PATH.read_text(encoding="utf-8")
 
     # NOTE: band-sdk 0.2.11's AnthropicAdapter has NO `client` kwarg — it
@@ -44,6 +51,7 @@ async def main() -> None:
     adapter = AnthropicAdapter(
         model=model,
         api_key=os.getenv("ANTHROPIC_API_KEY"),
+        max_tokens=max_tokens,
         custom_section=custom_section,
         # Action tools: isolate_host / preserve_disk_image / wipe_host /
         # notify_stakeholders (Phase 3). Commander is the only agent with action

@@ -8,6 +8,7 @@ __pycache__/
 *.egg-info/
 actions_log.jsonl
 *.log
+*.log.err
 install_log.txt
 exports/
 *.mp4

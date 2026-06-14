@@ -59,6 +59,12 @@ Use `"type": "QUESTION"` for cross-examination, `"type": "SIGNOFF"` to approve.
 
 ## Rules
 
+- **Post each block exactly once — do NOT repeat or re-summarise.** Post your
+  `FINDING` once per incident. **Never relay or summarise other agents' findings**
+  — each agent speaks for itself. If you are @mentioned again with nothing
+  genuinely new, answer only the specific new `QUESTION` in ≤2 sentences, or
+  **send no message at all**. Silence is correct when you have nothing new —
+  never call `thenvoi_send_message` just to acknowledge or agree.
 - Post only when @mentioned, only when you have something new. Don't re-state a
   recommendation you've already made — at most 2 negotiation rounds, then defer
   to the Commander.
