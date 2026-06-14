@@ -1,7 +1,17 @@
 # Option B Implementation Test Results
 
 **Date**: 2026-06-14  
-**Status**: ✅ All validation & integration tests pass (13/13)
+**Status**: ✅ Option B suite green (13/13); full repo suite 34/34 under `.venv` + pytest
+
+> **2026-06-14 correction.** After the injector was rewritten from a hand-rolled
+> urllib client to the Band SDK `thenvoi_rest.RestClient` (commit `de4356a`),
+> three tests went stale and started failing — `test_rest_api_endpoints` still
+> asserted a removed `_rest_call`/`/me/chats` string, and the two integration
+> tests patched `urllib.request.urlopen`, which the new code never calls, so they
+> fell through to a **real** Band API request (live 401). They've been rewritten
+> to mock `thenvoi_rest.RestClient` and now assert the SDK call sequence with no
+> network. Also: pytest is now installed in `.venv`, so the whole suite runs on
+> one interpreter (`.venv\Scripts\python.exe -m pytest -q`).
 
 ---
 
@@ -16,19 +26,20 @@ All tests confirm the Option B design is correctly implemented:
 - ✅ **Triage prompt**: Instructs room creation and specialist recruitment
 - ✅ **Protocol consistency**: §C, §E.2, §E.3 sections align (intake room, creation-based)
 - ✅ **Injector refactor**: Removed `default_room_id` dependency
-- ✅ **REST endpoints**: Uses Band human API (`/me/chats`, `/me/chats/{id}/participants`, etc.)
+- ✅ **REST endpoints**: Posts via the Band SDK `RestClient` human API (`human_api_chats.create_my_chat_room` / `add_participant`, `human_api_messages.send_my_chat_message`) — no raw urllib
 - ✅ **BRIEF message format**: Mentions human CISO in incident room
 - ✅ **Config state**: `room.default_room_id` stays blank (creation-based, not fallback)
 
 ### 2. **Integration Tests** (5 tests — `test_option_b_integration.py`)
 
-Tests validate the REST call flow without hitting the real Band API:
+Tests validate the REST call flow with `thenvoi_rest.RestClient` mocked — no
+real Band API calls:
 
-- ✅ **REST call sequence**: Injector makes 3 calls in correct order
-  1. `POST /me/chats` → create intake room → returns `room_id`
-  2. `POST /me/chats/{room_id}/participants` → add Triage
-  3. `POST /me/chats/{room_id}/messages` → post alert @mentioning Triage
-- ✅ **Endpoint patterns**: Confirms human API endpoints used (not agent API)
+- ✅ **REST call sequence**: Injector makes 3 SDK calls in correct order
+  1. `human_api_chats.create_my_chat_room(...)` → create intake room → returns `.id`
+  2. `human_api_chats.add_participant(chat_id, agent_id=triage)` → add Triage
+  3. `human_api_messages.send_my_chat_message(chat_id, message=...)` → post alert @mentioning Triage
+- ✅ **Endpoint patterns**: Confirms the human-API surface is used (not agent API), and the alert mention carries Triage's id
 - ✅ **Triage context switching**: Prompt clarifies intake room vs incident room
 - ✅ **Message schema**: ProtocolMessage supports BRIEF with `recruited` field
 - ✅ **Code isolation**: Commander doesn't have `create_chatroom`; only Triage does

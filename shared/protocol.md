@@ -419,14 +419,21 @@ incident coordination happens in the incident room Triage creates.
 The contested incident is forced by the agents' **own tools**, not hardcoded:
 
 - Threat Intel: `lookup_ioc("185.220.101.47")` → BlackHaze ransomware,
-  `lateral_movement: true`; `assess_spread_risk("srv-db-01")` → high/critical →
-  recommends **isolate + wipe now**.
+  `lateral_movement: true`; `assess_spread_risk("srv-db-01")` → critical with
+  `eradication_requires_reimage: true` (a domain controller is reachable) →
+  isolation **contains but does not eradicate**; the host **must be wiped +
+  reimaged**.
 - Compliance: `check_regulatory_triggers("INC-C")` → GDPR-ART-33 (72h) +
   SEC-8K-1.05; `evidence_preservation_requirements("srv-db-01")` →
-  `blocks_destructive_actions: ["wipe_host"]` → **VETO the wipe**, isolate +
-  image instead, start the 72h clock.
-- The deadlock (wipe vs. preserve) → Commander escalates → human rules (e.g.
-  "isolate and image now, defer wipe") → Commander executes, exports report.
+  `requires_human_authorization_to_destroy: true` → the host is under a hold a
+  forensic image does **not** release → **VETO the wipe**; only a human officer
+  can authorize destruction. Isolate + image are fine; start the 72h clock.
+- **Why it can't auto-resolve:** "image then wipe" does not satisfy the hold, and
+  "just isolate" does not eradicate the foothold — no sequence satisfies both.
+  Commander executes the agreed actions (isolate, image, notify) and **escalates
+  the wipe to the human CISO**, who makes the risk call (authorize the wipe vs.
+  keep the host live). Commander executes the ruling, exports the report. The
+  human decision is structurally required, not optional.
 
 INC-A completes with sign-offs and **no** escalation; INC-B is closed at triage.
 That proportionality is the proof the system isn't theatre.

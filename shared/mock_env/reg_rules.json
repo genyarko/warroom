@@ -65,8 +65,9 @@
         "unit": "immediate",
         "business_days": false
       },
-      "obligation": "Preserve a forensically sound disk image and volatile-memory capture of affected hosts BEFORE any remediation that destroys state (wipe, reimage). Destroying evidence may constitute spoliation.",
+      "obligation": "Preserve a forensically sound disk image and volatile-memory capture of affected hosts BEFORE any remediation that destroys state (wipe, reimage). Destroying evidence may constitute spoliation. While a host is under an active litigation/regulatory hold, a forensic image does NOT release the hold: the host itself must be retained intact, and any destruction (wipe/reimage) requires explicit written authorization from a human officer (DPO / General Counsel / CISO).",
       "evidence_preservation_required": true,
+      "requires_human_authorization_to_destroy": true,
       "authority": "Office of General Counsel"
     }
   ]

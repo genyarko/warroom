@@ -77,6 +77,19 @@ def assess_spread_risk(asset_id: str) -> dict[str, Any]:
     else:
         risk = "low"
 
+    # A reachable credential store / domain controller (holds "credentials")
+    # means a live foothold can pivot to domain-wide takeover. Network isolation
+    # CONTAINS the spread but does not ERADICATE an established foothold: on a
+    # self-propagating threat that has already authenticated outward, the host
+    # must be wiped/reimaged to be trustworthy again. This is what makes "just
+    # isolate" insufficient and puts eradication on a collision course with an
+    # evidence/legal hold.
+    dc_reachable = any(
+        "credentials" in (get_asset(a) or {}).get("data_classes", [])
+        for a in reachable
+    )
+    eradication_requires_reimage = (risk == "critical") and dc_reachable
+
     rationale_bits = [
         f"host criticality={criticality}",
         f"segment={segment or 'unknown'}"
@@ -85,7 +98,13 @@ def assess_spread_risk(asset_id: str) -> dict[str, Any]:
     ]
     if risk in ("high", "critical"):
         rationale_bits.append(
-            "containment is time-sensitive — recommend immediate network isolation"
+            "containment is time-sensitive -- recommend immediate network isolation"
+        )
+    if eradication_requires_reimage:
+        rationale_bits.append(
+            "a domain controller / credential store is reachable: isolation "
+            "contains but does NOT eradicate the foothold -- wipe + reimage is "
+            "required to prevent domain-wide re-compromise"
         )
 
     return {
@@ -95,6 +114,8 @@ def assess_spread_risk(asset_id: str) -> dict[str, Any]:
         "network_segment": segment,
         "spread_risk": risk,
         "reachable_high_value_hosts": reachable,
+        "containment_sufficient": not eradication_requires_reimage,
+        "eradication_requires_reimage": eradication_requires_reimage,
         "rationale": "; ".join(rationale_bits) + ".",
     }
 

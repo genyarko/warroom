@@ -4,20 +4,16 @@ This test validates the REST API contract without actually calling Band
 (mocks the HTTP layer to verify the request payloads are correct).
 """
 
-import json
-from unittest.mock import Mock, patch, call
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def test_injector_rest_flow():
-    """Test that injector makes the correct REST calls in the right order."""
-    from injector.inject_alert import _post_via_rest
+def _triage_creds():
     from shared.config import AgentCreds
-    from contextlib import contextmanager
 
-    triage = AgentCreds(
+    return AgentCreds(
         name="triage",
         framework="langgraph",
         agent_id="triage-uuid-123",
@@ -26,37 +22,30 @@ def test_injector_rest_flow():
         handle="@merolavtech/triage",
     )
 
-    call_sequence = []
 
-    @contextmanager
-    def mock_response(status, data):
-        """Create a mock context manager response."""
-        resp = Mock()
-        resp.status = status
-        resp.read.return_value = json.dumps(data).encode()
-        resp.__enter__ = Mock(return_value=resp)
-        resp.__exit__ = Mock(return_value=None)
-        yield resp
+def _mock_rest_client():
+    """A fake thenvoi_rest.RestClient that records calls and never hits the network.
 
-    def mock_urlopen(req):
-        call_sequence.append({"method": req.get_method(), "url": req.full_url})
+    The injector imports RestClient *inside* ``_post_via_rest`` (``from
+    thenvoi_rest import RestClient``), so patching ``thenvoi_rest.RestClient``
+    intercepts construction at call time. ``create_my_chat_room`` returns an
+    object with ``.id`` (the SDK's response shape).
+    """
+    client = Mock(name="RestClient")
+    client.human_api_chats.create_my_chat_room.return_value = Mock(id="intake-room-123")
+    client.human_api_chats.add_participant.return_value = None
+    client.human_api_messages.send_my_chat_message.return_value = None
+    return client
 
-        # Return appropriate response based on call sequence
-        if len(call_sequence) == 1:
-            # Create room
-            resp = Mock(status=201, read=lambda: json.dumps({"id": "intake-room-123"}).encode())
-        elif len(call_sequence) == 2:
-            # Add participant
-            resp = Mock(status=200, read=lambda: json.dumps({}).encode())
-        elif len(call_sequence) == 3:
-            # Send message
-            resp = Mock(status=200, read=lambda: json.dumps({}).encode())
 
-        resp.__enter__ = Mock(return_value=resp)
-        resp.__exit__ = Mock(return_value=None)
-        return resp
+def test_injector_rest_flow():
+    """Injector makes the 3 SDK calls in order: create room → add Triage → post."""
+    from injector.inject_alert import _post_via_rest
 
-    with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+    triage = _triage_creds()
+    client = _mock_rest_client()
+
+    with patch("thenvoi_rest.RestClient", return_value=client) as rest_ctor:
         room_id = _post_via_rest(
             content="@Triage test alert",
             triage=triage,
@@ -64,44 +53,34 @@ def test_injector_rest_flow():
             base_url="https://app.thenvoi.com",
         )
 
+    # Client built with the supplied creds (no network).
+    rest_ctor.assert_called_once_with(
+        api_key="test-api-key", base_url="https://app.thenvoi.com"
+    )
+
     assert room_id == "intake-room-123", "Should return the created room ID"
-    assert len(call_sequence) == 3, f"Expected 3 REST calls, made {len(call_sequence)}"
-    print("[OK] Injector makes correct REST calls in correct order")
+
+    # Exactly the three expected calls, each scoped to the created room.
+    client.human_api_chats.create_my_chat_room.assert_called_once()
+    client.human_api_chats.add_participant.assert_called_once()
+    assert client.human_api_chats.add_participant.call_args.kwargs == {
+        "chat_id": "intake-room-123",
+        "agent_id": "triage-uuid-123",
+    }
+    client.human_api_messages.send_my_chat_message.assert_called_once()
+    assert client.human_api_messages.send_my_chat_message.call_args.kwargs["chat_id"] \
+        == "intake-room-123"
+    print("[OK] Injector makes correct SDK calls in correct order")
 
 
 def test_injector_rest_endpoint_pattern():
-    """Test that injector uses correct REST endpoint patterns."""
+    """Injector drives the human API surface (not the agent API)."""
     from injector.inject_alert import _post_via_rest
-    from shared.config import AgentCreds
 
-    triage = AgentCreds(
-        name="triage",
-        framework="langgraph",
-        agent_id="triage-uuid-123",
-        api_key="triage-key",
-        account="primary",
-        handle="@merolavtech/triage",
-    )
+    triage = _triage_creds()
+    client = _mock_rest_client()
 
-    endpoints_called = []
-
-    def mock_urlopen(req):
-        endpoints_called.append({
-            "method": req.get_method(),
-            "url": req.full_url,
-        })
-
-        # Return mock responses
-        if len(endpoints_called) == 1:
-            resp = Mock(status=201, read=lambda: json.dumps({"id": "room-123"}).encode())
-        else:
-            resp = Mock(status=200, read=lambda: json.dumps({}).encode())
-
-        resp.__enter__ = Mock(return_value=resp)
-        resp.__exit__ = Mock(return_value=None)
-        return resp
-
-    with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+    with patch("thenvoi_rest.RestClient", return_value=client):
         _post_via_rest(
             content="@Triage test",
             triage=triage,
@@ -109,22 +88,21 @@ def test_injector_rest_endpoint_pattern():
             base_url="https://app.thenvoi.com",
         )
 
-    # Verify endpoint sequence
-    assert len(endpoints_called) == 3, f"Should make 3 REST calls, made {len(endpoints_called)}"
+    # All three operations go through human_api_* (the user-key surface),
+    # mirroring the human "/me/chats" REST endpoints.
+    assert client.human_api_chats.create_my_chat_room.called, \
+        "Room creation should use human_api_chats.create_my_chat_room"
+    assert client.human_api_chats.add_participant.called, \
+        "Add participant should use human_api_chats.add_participant"
+    assert client.human_api_messages.send_my_chat_message.called, \
+        "Send should use human_api_messages.send_my_chat_message"
 
-    # First call: /me/chats (create room)
-    assert "/me/chats" in endpoints_called[0]["url"], "First call should create room at /me/chats"
-    assert endpoints_called[0]["method"] == "POST", "Create room should use POST"
-
-    # Second call: /me/chats/{id}/participants (add Triage)
-    assert "/me/chats/" in endpoints_called[1]["url"] and "participants" in endpoints_called[1]["url"], \
-        "Second call should add participant"
-
-    # Third call: /me/chats/{id}/messages (send alert)
-    assert "/me/chats/" in endpoints_called[2]["url"] and "messages" in endpoints_called[2]["url"], \
-        "Third call should send message"
-
-    print("[OK] Injector uses correct REST endpoint patterns")
+    # The alert mention carries Triage's handle + id so Band can resolve it.
+    msg = client.human_api_messages.send_my_chat_message.call_args.kwargs["message"]
+    mention = msg.mentions[0]  # SDK coerces to a ChatMessageRequestMentionsItem
+    mention_id = getattr(mention, "id", None) if not isinstance(mention, dict) else mention["id"]
+    assert mention_id == "triage-uuid-123", "Alert should @mention Triage by id"
+    print("[OK] Injector uses the human API surface and mentions Triage")
 
 
 def test_triage_context_switching_prompt():

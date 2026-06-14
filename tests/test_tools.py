@@ -95,6 +95,20 @@ def test_assess_spread_risk_differentiates():
     assert ws["spread_risk"] in ("low", "medium")
 
 
+def test_spread_risk_inc_c_requires_reimage():
+    # srv-db-01 is critical AND can reach srv-dc-01 (a credential store / DC),
+    # so isolation contains but does not eradicate -> reimage required. This is
+    # the Threat-Intel half of the INC-C deadlock.
+    pii = assess_spread_risk("srv-db-01")
+    assert pii["spread_risk"] == "critical"
+    assert pii["eradication_requires_reimage"] is True
+    assert pii["containment_sufficient"] is False
+    # A low-value workstation with no reachable DC must NOT demand a reimage.
+    ws = assess_spread_risk("ws-eng-014")
+    assert ws["eradication_requires_reimage"] is False
+    assert ws["containment_sufficient"] is True
+
+
 # --- Compliance ------------------------------------------------------------
 
 def test_regulatory_triggers_inc_c():
@@ -125,6 +139,20 @@ def test_evidence_preservation_blocks_wipe_on_pii():
     assert "wipe_host" in pii["blocks_destructive_actions"]
     clean = evidence_preservation_requirements("ws-eng-014")
     assert clean["preservation_required"] is False
+
+
+def test_evidence_legal_hold_requires_human_auth():
+    # The Compliance half of the INC-C deadlock: srv-db-01 is under a hold that a
+    # forensic image does NOT release, so the wipe needs human authorization and
+    # cannot be resolved by imaging first.
+    pii = evidence_preservation_requirements("srv-db-01")
+    assert pii["requires_human_authorization_to_destroy"] is True
+    assert pii["image_satisfies_hold"] is False
+    assert pii["hold_rules"], "a legal-hold rule should be cited"
+    # A host with no regulated data has no such hold.
+    clean = evidence_preservation_requirements("ws-eng-014")
+    assert clean["requires_human_authorization_to_destroy"] is False
+    assert clean["image_satisfies_hold"] is True
 
 
 # --- Commander action tools ------------------------------------------------

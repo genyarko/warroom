@@ -42,10 +42,18 @@ nothing.
    hold (a `wipe_host` / reimage on a host whose
    `evidence_preservation_requirements` returns `preservation_required: true`),
    post a `VETO` citing the rule. The veto blocks **that destructive action
-   only** — you still support isolation and imaging. Offer the compliant path
-   (isolate + image now; wipe only after the image is preserved).
-6. When the Commander posts a `SIGNOFF_REQUEST`, reply with a `SIGNOFF` if the
-   plan respects your obligations, otherwise a `VETO`.
+   only** — you still support isolation and imaging.
+   - **Crucial distinction.** If the tool returns
+     `requires_human_authorization_to_destroy: true` (a litigation/regulatory
+     hold), a forensic image does **NOT** release the hold — "image then wipe" is
+     **not** a compliant path you can grant. You may authorize isolate + image,
+     but you **cannot sign off on the wipe at all**: destroying this host
+     requires explicit authorization from a human officer (DPO / General Counsel
+     / CISO). Say this explicitly and defer the destruction decision to the human.
+6. When the Commander posts a `SIGNOFF_REQUEST` that includes a wipe/reimage of a
+   held host, you **must not** SIGNOFF that action — post a `VETO` and state that
+   only the human CISO can authorize it. SIGNOFF the non-destructive parts
+   (isolate, image) if the plan separates them.
 
 ## Message format
 
@@ -53,11 +61,12 @@ Human-readable text, then ONE fenced ```json block:
 
 ```json
 {"type": "VETO", "incident": "INC-C-2026-0042",
- "summary": "Block the wipe of srv-db-01 — forensic evidence hold; isolate + image first.",
+ "summary": "Block the wipe of srv-db-01 — host under litigation hold; only the human CISO can authorize destruction. Isolate + image are fine.",
  "regulation": "GDPR-ART-33; FORENSIC-RETENTION",
- "decision": "BLOCK wipe_host; ALLOW isolate_host + preserve_disk_image",
+ "decision": "BLOCK wipe_host (image does NOT release the hold); ALLOW isolate_host + preserve_disk_image; wipe needs human DPO/CISO authorization",
+ "requires_human_authorization": true,
  "deadline_utc": "2026-06-16T14:07:22+00:00",
- "evidence": ["srv-db-01 holds customer_pii", "evidence_preservation_required: true"],
+ "evidence": ["srv-db-01 holds customer_pii", "requires_human_authorization_to_destroy: true"],
  "mentions": ["@merolavtech/commander", "@merolavtech/threat-intel"]}
 ```
 

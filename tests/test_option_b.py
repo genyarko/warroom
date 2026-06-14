@@ -99,20 +99,27 @@ def test_injector_no_default_room_id_dependency():
 
 
 def test_rest_api_endpoints():
-    """Test that REST calls use correct endpoints (documentation check)."""
+    """Test that the injector posts via the Band SDK RestClient human API.
+
+    (Structure check. The injector was rewritten from a hand-rolled urllib
+    client to ``thenvoi_rest.RestClient`` in commit de4356a — this guards
+    against regressing to raw HTTP and confirms the human-API methods are used.)
+    """
     injector = (REPO_ROOT / "injector" / "inject_alert.py").read_text()
 
-    # Should have _rest_call function
-    assert "_rest_call" in injector, "Should have _rest_call function"
+    # Should post through the SDK RestClient, not raw urllib.
+    assert "RestClient" in injector, "Should use thenvoi_rest.RestClient"
+    assert "urllib" not in injector, "Should NOT hand-roll HTTP via urllib"
 
-    # Should call /me/chats endpoints (human API)
-    assert "/me/chats" in injector, "Should use /me/chats for room creation"
-    assert "/me/chats/{room_id}/participants" in injector or "/me/chats/{" in injector, \
-        "Should use /me/chats/{id}/participants for add_participant"
-    assert "/me/chats/{room_id}/messages" in injector or "/me/chats/{" in injector, \
-        "Should use /me/chats/{id}/messages for posting"
+    # Should drive the human-API surface (create room, add participant, post).
+    assert "human_api_chats.create_my_chat_room" in injector, \
+        "Should create the intake room via human_api_chats.create_my_chat_room"
+    assert "human_api_chats.add_participant" in injector, \
+        "Should add Triage via human_api_chats.add_participant"
+    assert "human_api_messages.send_my_chat_message" in injector, \
+        "Should post the alert via human_api_messages.send_my_chat_message"
 
-    print("[OK] REST endpoints use human API (/me/chats)")
+    print("[OK] Injector posts via RestClient human API")
 
 
 def test_brief_message_mentions_human():

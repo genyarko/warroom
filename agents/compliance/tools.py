@@ -155,6 +155,18 @@ def evidence_preservation_requirements(asset_id: str) -> dict[str, Any]:
     ]
     required = bool(triggering_rules)
 
+    # A subset of those rules impose a litigation/regulatory HOLD on the host
+    # itself: imaging does NOT release it, and destroying the host needs a human
+    # officer's authorization. This is what makes "image then wipe" insufficient
+    # and forces an escalation rather than a clean sequencing of actions.
+    hold_rules = [
+        {"rule_id": r["rule_id"], "name": r["name"]}
+        for r in load_reg_rules()
+        if r.get("requires_human_authorization_to_destroy")
+        and data_classes & set(r.get("trigger", {}).get("data_classes", []))
+    ]
+    human_auth_required = bool(hold_rules)
+
     return {
         "asset_id": asset_id,
         "found": True,
@@ -164,7 +176,17 @@ def evidence_preservation_requirements(asset_id: str) -> dict[str, Any]:
         "required_artifacts": (
             ["forensic disk image", "volatile memory capture"] if required else []),
         "triggering_rules": triggering_rules,
+        # Legal-hold semantics: when true, a forensic image is NOT a substitute
+        # for retaining the host, and only a human can authorize destruction.
+        "requires_human_authorization_to_destroy": human_auth_required,
+        "image_satisfies_hold": not human_auth_required,
+        "hold_rules": hold_rules,
         "rationale": (
+            "Host is under an active litigation/regulatory hold. A forensic "
+            "image does NOT release the hold; the host must be retained intact. "
+            "Wiping/reimaging requires explicit human (DPO/General Counsel/CISO) "
+            "authorization -- it cannot be resolved by imaging first."
+            if human_auth_required else
             "Host holds regulated data; destroying it before imaging risks "
             "spoliation and breaks the notification evidence chain. Preserve "
             "before any wipe/reimage."

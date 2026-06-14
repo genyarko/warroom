@@ -1,9 +1,8 @@
-  What's blocking Phase 0 completion (only you can do these)
+Validate it live (the one remaining step — yours to drive)
 
-  1. Create your second Band account (different email) for the Compliance agent's org.
-  2. Register 4 External Agents on app.band.ai (3 on primary, 1 on secondary). Copy the API key immediately on each — shown only once.
-  3. Paste the 4 (uuid, api_key) pairs into agent_config.yaml.
-  4. Send the contact request between accounts and approve it.
-  5. Run python quickstart/my_agent.py and chat with it in the web UI.
-  6. Walk §A.1–A.5 of shared/protocol.md and tick each ☐ → ✅.
-  7. Lock the fallback decisions in §C.
+  powershell -File scripts\run_all.ps1 -Stop          # if any are running
+  .venv\Scripts\python.exe scripts\clean_rooms.py --execute   # one clean room
+  powershell -File scripts\run_all.ps1                 # start all 4, wait for GREEN LIGHT
+  # then fire INC-C: paste the alert and @-pick Triage (or run the injector)
+  Watch for the new climax: Compliance VETO citing human authorization → Intel holding the reimage line → Commander posts an ESCALATION
+  @mentioning you → you rule → Commander executes + RESOLUTION.
