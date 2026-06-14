@@ -193,7 +193,7 @@ def test_framework_builders_produce_named_tools():
     assert {t.name for t in intel_lc()} == {"lookup_ioc", "assess_spread_risk"}
     assert {f.__name__ for f in pydantic_ai_tools()} == {
         "check_regulatory_triggers", "start_notification_clock",
-        "evidence_preservation_requirements"}
+        "regulatory_clock_status", "evidence_preservation_requirements"}
     anthropic_names = {get_custom_tool_name(model) for model, _ in anthropic_tools()}
     assert anthropic_names == {
         "isolate_host", "preserve_disk_image", "wipe_host", "notify_stakeholders"}

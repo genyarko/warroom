@@ -7,6 +7,7 @@ __pycache__/
 .uv/
 *.egg-info/
 actions_log.jsonl
+regulatory_clocks.json
 *.log
 *.log.err
 install_log.txt

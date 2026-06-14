@@ -21,12 +21,23 @@ directly.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from pydantic_ai import RunContext
 
+from shared import reg_clock
 from shared.mock_data import get_asset, load_alert, load_reg_rules
+
+_INC_RE = re.compile(r"INC-[ABC]", re.IGNORECASE)
+
+
+def _norm_incident(incident: str) -> str:
+    """Normalise an incident arg to its INC-A/B/C alias so the clock key is stable
+    whether the LLM passes 'INC-C' or 'INC-C-2026-0042'."""
+    m = _INC_RE.search(str(incident or ""))
+    return m.group(0).upper() if m else str(incident or "")
 
 
 def _affected_data_classes(incident: str) -> tuple[str, list[str]]:
@@ -121,16 +132,42 @@ def start_notification_clock(
     else:  # "immediate"
         deadline_dt = now
 
+    # Persist the clock ONCE per (incident, regulation) so the deadline is fixed
+    # and subsequent turns show a live countdown. Idempotent: re-calling returns
+    # the original deadline + the current T-minus (the clock does not restart).
+    inc = _norm_incident(incident)
+    rec = reg_clock.start_clock(
+        incident=inc, regulation=rule["rule_id"], name=rule["name"],
+        deadline_utc=deadline_dt.isoformat(), window=f"{value} {unit}", now=now)
+
     return {
         "regulation": rule["rule_id"],
         "name": rule["name"],
-        "incident": incident,
+        "incident": inc,
         "started": True,
-        "started_utc": now.isoformat(),
-        "deadline_utc": deadline_dt.isoformat(),
+        "started_utc": rec["started_utc"],
+        "deadline_utc": rec["deadline_utc"],
+        "t_minus": rec["t_minus"],
         "window": f"{value} {unit}",
         "obligation": rule["obligation"],
         "authority": rule.get("authority"),
+    }
+
+
+def regulatory_clock_status(incident: str, now: datetime | None = None) -> dict[str, Any]:
+    """Live status of every notification clock running for an incident, with the
+    current T-minus (or BREACHED). Call this on later turns to post 'T-minus'
+    reminders without restarting the clocks."""
+    inc = _norm_incident(incident)
+    clocks = reg_clock.clock_status(inc, now=now)
+    return {
+        "incident": inc,
+        "clocks": clocks,
+        "any_breached": any(c.get("breached") for c in clocks),
+        "summary": (
+            "; ".join(f"{c['regulation']}: {c['t_minus']}" for c in clocks)
+            if clocks else "No notification clocks running for this incident."
+        ),
     }
 
 
@@ -205,6 +242,7 @@ def evidence_preservation_requirements(asset_id: str) -> dict[str, Any]:
 _triggers_impl = check_regulatory_triggers
 _clock_impl = start_notification_clock
 _evidence_impl = evidence_preservation_requirements
+_clock_status_impl = regulatory_clock_status
 
 
 def pydantic_ai_tools() -> list[Any]:
@@ -222,8 +260,14 @@ def pydantic_ai_tools() -> list[Any]:
 
     def start_notification_clock(ctx: RunContext, regulation: str, incident: str) -> str:
         """Start the statutory notification clock for a regulation and return its
-        deadline timestamp. 'regulation' is a rule_id (e.g. 'GDPR-ART-33')."""
+        deadline + current T-minus. 'regulation' is a rule_id (e.g. 'GDPR-ART-33').
+        Idempotent: the deadline is fixed on the first call and does not restart."""
         return json.dumps(_clock_impl(regulation, incident), indent=2, default=str)
+
+    def regulatory_clock_status(ctx: RunContext, incident: str) -> str:
+        """Live status (T-minus / BREACHED) of all notification clocks running for
+        an incident. Call this on later turns to post 'T-minus' reminders."""
+        return json.dumps(_clock_status_impl(incident), indent=2, default=str)
 
     def evidence_preservation_requirements(ctx: RunContext, asset_id: str) -> str:
         """Return whether a forensic image must be preserved before destructive
@@ -234,5 +278,6 @@ def pydantic_ai_tools() -> list[Any]:
     return [
         check_regulatory_triggers,
         start_notification_clock,
+        regulatory_clock_status,
         evidence_preservation_requirements,
     ]
