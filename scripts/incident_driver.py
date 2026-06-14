@@ -50,6 +50,7 @@ class ParsedMsg:
     role: str | None        # mapped role of the sender, or None (human/unknown)
     is_human: bool
     type: str | None        # protocol block type, or None (no/invalid block)
+    text: str = ""          # lowercased message content (for keyword fallback)
 
 
 def parse_block_type(content: str) -> str | None:
@@ -66,41 +67,82 @@ def parse_block_type(content: str) -> str | None:
     return None
 
 
+# Beat detection is tolerant: it accepts the protocol json `type` OR role-scoped
+# keywords, because the agents don't reliably emit clean json blocks (seen live:
+# Commander posted "GATHERING"; Triage's BRIEF parsed as no-type). Keywords are
+# scoped to the role that legitimately emits a beat, to limit false positives.
+
+def _beat(p: ParsedMsg, beat: str) -> bool:
+    if p.type == beat:
+        return True
+    t = p.text
+    if beat == "BRIEF":
+        return p.role == "triage" and ("brief" in t or "recruit" in t)
+    if beat == "SIGNOFF_REQUEST":
+        return p.role == "commander" and (
+            "signoff_request" in t or "sign-off request" in t
+            or "signoff request" in t or "please sign off" in t
+            or "sign off on" in t or "requesting sign" in t)
+    if beat == "VETO":
+        return p.role == "compliance" and "veto" in t
+    if beat == "ESCALATION":
+        return p.role == "commander" and "escalat" in t
+    if beat == "RESOLUTION":
+        return p.role == "commander" and (
+            "incident closed" in t or "incident is closed" in t
+            or "incident resolved" in t or "has been resolved" in t)
+    if beat == "CLOSE":
+        return p.role == "triage" and "false positive" in t
+    return False
+
+
 def decide_nudge(parsed: list[ParsedMsg],
                  recruited: tuple[str, ...] = SPECIALIST_ROLES) -> Nudge | None:
-    """Pure state machine: given the incident transcript (oldest→newest),
-    return the next nudge, or None if nothing is owed / the incident is done.
-
-    Mirrors shared/protocol.md §E.2: BRIEF → FINDINGs → SIGNOFF_REQUEST →
+    """Pure state machine (tolerant): given the incident transcript (oldest→
+    newest), return the next nudge, or None if nothing is owed / the incident is
+    done. Mirrors shared/protocol.md §E.2: BRIEF → FINDINGs → SIGNOFF_REQUEST →
     SIGNOFF/VETO → (ESCALATION → human ruling) → RESOLUTION.
+
+    Robust to messy LLM output: a specialist counts as having contributed if it
+    posted ANY message (not only a `type:FINDING` block), and beats are detected
+    by `type` OR role-scoped keywords.
     """
-    types = [p.type for p in parsed if p.type]
-    if any(t in TERMINAL_TYPES for t in types):
+    if any(_beat(p, "RESOLUTION") or _beat(p, "CLOSE") for p in parsed):
         return None  # incident closed — nothing to drive
 
-    has = set(types)
+    def first_idx(beat: str) -> int:
+        for i, p in enumerate(parsed):
+            if _beat(p, beat):
+                return i
+        return -1
 
-    # Helper: which specialists have posted a given block type.
-    def posted(block: str) -> set[str]:
-        return {p.role for p in parsed if p.type == block and p.role}
+    sr_idx = first_idx("SIGNOFF_REQUEST")
+    esc_idx = first_idx("ESCALATION")
+    veto = any(_beat(p, "VETO") for p in parsed)
 
-    if "BRIEF" not in has:
+    # A specialist has "contributed" if it has posted any message at all.
+    contributed = {p.role for p in parsed if p.role in recruited}
+
+    # Has the incident even started? (BRIEF, or any specialist/commander post.)
+    started = (any(_beat(p, "BRIEF") for p in parsed) or bool(contributed)
+               or sr_idx >= 0 or any(p.role == "commander" for p in parsed))
+    if not started:
         return Nudge("triage", "classify the alert and post the BRIEF, recruiting "
                      "the specialists, so the incident can start.")
 
-    # Phase: gather FINDINGs.
-    missing_findings = [r for r in recruited if r not in posted("FINDING")]
-    if "SIGNOFF_REQUEST" not in has:
-        if missing_findings:
-            return Nudge(missing_findings[0],
-                         "post your FINDING (with thenvoi_send_message) "
-                         "@mentioning @merolavtech/commander so the Commander can "
-                         "issue the SIGNOFF_REQUEST.")
+    # Phase: gather FINDINGs (until the Commander issues a SIGNOFF_REQUEST).
+    if sr_idx < 0:
+        missing = [r for r in recruited if r not in contributed]
+        if missing:
+            return Nudge(missing[0],
+                         "post your FINDING now (call thenvoi_send_message) "
+                         "@mentioning @merolavtech/commander — the Commander is "
+                         "waiting on it to issue the SIGNOFF_REQUEST.")
         return Nudge("commander", "all specialist FINDINGs are in — post your "
                      "SIGNOFF_REQUEST @mentioning each specialist.")
 
-    # Phase: collect sign-offs / veto on the request.
-    decided = posted("SIGNOFF") | posted("VETO")
+    # Phase: collect sign-offs / veto AFTER the request (any post counts).
+    decided = {p.role for p in parsed[sr_idx + 1:] if p.role in recruited}
     missing_decisions = [r for r in recruited if r not in decided]
     if missing_decisions:
         return Nudge(missing_decisions[0],
@@ -108,13 +150,11 @@ def decide_nudge(parsed: list[ParsedMsg],
                      "or a VETO @mentioning @merolavtech/commander.")
 
     # Phase: veto/deadlock → escalation → human ruling → resolution.
-    if "VETO" in has and "ESCALATION" not in has:
+    if veto and esc_idx < 0:
         return Nudge("commander", "Compliance has VETOed the contested action — "
                      "post one ESCALATION @mentioning the human CISO (@merolavtech).")
 
-    if "ESCALATION" in has:
-        # Has the human ruled since the escalation?
-        esc_idx = max(i for i, p in enumerate(parsed) if p.type == "ESCALATION")
+    if esc_idx >= 0:
         human_ruled = any(p.is_human for p in parsed[esc_idx + 1:])
         if not human_ruled:
             return Nudge("human", "the incident is escalated to you — please post "
@@ -122,7 +162,6 @@ def decide_nudge(parsed: list[ParsedMsg],
         return Nudge("commander", "the CISO has ruled — execute the approved "
                      "actions and post the RESOLUTION.")
 
-    # All signed off, no veto, no resolution yet.
     return Nudge("commander", "all sign-offs are in — execute the plan and post "
                  "the RESOLUTION.")
 
@@ -161,8 +200,10 @@ def _parse(messages, roster: dict[str, dict]) -> list[ParsedMsg]:
     for m in messages:
         is_human = getattr(m, "sender_type", "") == "User"
         role = id_to_role.get(getattr(m, "sender_id", None))
+        content = getattr(m, "content", "") or ""
         out.append(ParsedMsg(role=role, is_human=is_human,
-                             type=parse_block_type(getattr(m, "content", ""))))
+                             type=parse_block_type(content),
+                             text=content.lower()))
     return out
 
 
@@ -177,12 +218,18 @@ def _discover_room(client, explicit: str | None):
     return rooms[0].id  # most recently active room the Facilitator is in
 
 
-def _human_mention(messages, roster):
-    """Find the human (CISO) id/name from the transcript, for @mentioning."""
-    for m in messages:
-        if getattr(m, "sender_type", "") == "User":
-            return {"id": m.sender_id, "handle": "merolavtech",
-                    "name": getattr(m, "sender_name", "CISO")}
+def _human_mention(client, room_id):
+    """Resolve the human (CISO) from the room PARTICIPANTS (not the transcript —
+    the human posts the alert in the intake room, so it may not appear here)."""
+    try:
+        resp = client.agent_api_participants.list_agent_chat_participants(chat_id=room_id)
+        for p in resp.data:
+            if getattr(p, "type", "") == "User":
+                return {"id": p.id,
+                        "handle": (getattr(p, "handle", None) or "merolavtech").lstrip("@"),
+                        "name": getattr(p, "name", None) or "CISO"}
+    except Exception:
+        pass
     return None
 
 
@@ -284,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
             ask = nudge.ask
 
         if target == "human":
-            hm = _human_mention(messages, roster)
+            hm = _human_mention(client, room)
             mentions = [hm] if hm else []
         else:
             r = roster.get(target)
