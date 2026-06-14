@@ -251,16 +251,18 @@ Lock these *before* Phase 1, so we don't have to redesign mid-build.
 | Q10 fails: no usable history endpoint | Exporter listens to the live stream during the run and persists messages as they arrive (slower to build; keep this as worst-case). |
 | Q13 confirms 24h retention | Auto-run exporter at every RESOLUTION; demo always uses a freshly injected incident — never an old room. |
 
-Decisions made (locked 2026-06-13 — all "happy paths" verified, no fallback needed):
+Decisions made (locked 2026-06-13, updated 2026-06-14 for Option B):
 
-- [x] Q6 path chosen: **Commander adds the CISO at escalation** (preferred).
-      Verified agents can add humans; no human pre-join required. Human may
-      still pre-join for the demo's sake, but it is not required.
+- [x] Q6 path chosen: **Triage adds the CISO when creating the incident room**.
+      Verified agents can add humans. The human is added to the incident room
+      at creation time, not at escalation (Commander only @mentions them later).
 - [x] Q8/Q9 path chosen: **Keep the cross-account demo.** Compliance stays on
       the secondary account. Requirement: the agent-to-agent contact handshake
       (see §A.0 gotcha) must be in place — it is, and is persistent.
-- [x] Q4 path chosen: **Triage creates the room per incident** via
-      `thenvoi_create_chatroom`. `room.default_room_id` stays blank.
+- [x] Q4 path chosen: **Triage creates the incident room per alert** via
+      `thenvoi_create_chatroom` after reading the alert. `room.default_room_id`
+      stays blank (no pre-made room). The injector creates a separate intake
+      room to deliver the alert to Triage.
 - [x] Q10 path chosen: **Exporter pulls history** from
       `GET /agent/chats/{id}/context` (paginate via `next_cursor`). No
       `delivery_status`; use `metadata.mentions` + inline `@[[uuid]]` tokens.
@@ -333,24 +335,29 @@ The text drives the live demo; the JSON block is the audit record the exporter
 parses. Tool outputs are NOT protocol blocks — the parser ignores any JSON
 without a `type`.
 
-### E.2 The flow (one war room per incident)
+### E.2 The flow (one incident room per alert; spawned by Triage)
 
-A room for the incident already contains the **human CISO + Triage** (created
-fresh per run — `room.default_room_id` in `agent_config.yaml`; matches the
-"fresh room per incident" retention mitigation). The injector posts the alert
-into it @mentioning Triage. From there:
+The **injector creates a temporary intake room** containing **Triage only** and
+posts the alert there @mentioning Triage. Triage reads the alert and then spins
+up the incident room. The intake room is a throwaway kickoff mechanism; the real
+incident coordination happens in the incident room Triage creates.
 
-1. **Kickoff & recruitment (Triage).** Triage calls `classify_alert` (and
-   `lookup_asset` if useful).
-   - **False positive** → post a `CLOSE` @mentioning the human only; recruit
-     nobody. (INC-B.)
-   - **Real incident** → for each specialist in `recommended_specialists`, use
-     `thenvoi_lookup_peers` then `thenvoi_add_participant` to recruit them into
-     this room (skip any already present), then post a `BRIEF` @mentioning all
-     recruited specialists. Recruitment must be **reasoned and visible** in the
-     brief ("asset holds customer_pii → adding Compliance"), never hardcoded.
-     The roster is whatever `classify_alert` returned: INC-C → Threat Intel +
-     Compliance + Commander; INC-A → Threat Intel + Commander (no Compliance).
+1. **Kickoff & room creation (Triage).** Triage receives the alert in the intake
+   room, calls `classify_alert` (and `lookup_asset` if useful).
+   - **False positive** → post a `CLOSE` @mentioning the human; recruit nobody.
+     (INC-B.) Triage does NOT create a room for this case.
+   - **Real incident** → use `thenvoi_create_chatroom` to spin up the incident
+     room, then:
+     - Add the **human CISO** via `thenvoi_add_participant` (so the CISO sees
+       everything from the start, not just at escalation).
+     - For each specialist in `recommended_specialists`, use `thenvoi_lookup_peers`
+       then `thenvoi_add_participant` to recruit them (skip any already present).
+     - Post a `BRIEF` @mentioning all recruited specialists (and the human).
+     
+     Recruitment must be **reasoned and visible** in the brief ("asset holds
+     customer_pii → adding Compliance"), never hardcoded. The roster is whatever
+     `classify_alert` returned: INC-C → Threat Intel + Compliance + Commander;
+     INC-A → Threat Intel + Commander (no Compliance).
 2. **Parallel analysis (specialists).** Each recruited specialist investigates
    with its own tools and posts a `FINDING` @mentioning the **Commander** (and
    the other specialist when relevant). Threat Intel: `lookup_ioc` per
@@ -384,7 +391,7 @@ into it @mentioning Triage. From there:
 
 | Message | Sender | @mention | Tools used |
 |---|---|---|---|
-| BRIEF | Triage | recruited specialists | classify_alert, lookup_asset, lookup_peers, add_participant |
+| BRIEF | Triage | recruited specialists + human | classify_alert, lookup_asset, lookup_peers, create_chatroom, add_participant |
 | CLOSE | Triage | human | classify_alert |
 | FINDING | Intel / Compliance | Commander (+ other specialist) | own domain tools |
 | QUESTION | any specialist | the asked specialist (+ Commander) | — |

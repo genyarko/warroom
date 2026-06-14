@@ -49,12 +49,12 @@ async def main() -> None:
         # built-in thenvoi_* tools; the domain tools in additional_tools above
         # are merged unconditionally by the adapter and are NOT affected (so
         # they must NOT be listed here, or the SDK logs "unknown tool" warnings).
-        # Triage needs messaging + recruitment: it adds the specialists
-        # classify_alert recommends into the (pre-created) incident room.
-        # Deliberately NO remove_participant and NO create_chatroom — Triage
-        # recruits into the existing room (see shared/protocol.md §E.2).
+        # Triage: creates the incident room (create_chatroom), adds the CISO
+        # and specialists (add_participant), and messages them (send_message).
+        # NO remove_participant — Triage does not remove participants.
         features=AdapterFeatures(include_tools=[
             "thenvoi_send_message",
+            "thenvoi_create_chatroom",
             "thenvoi_lookup_peers",
             "thenvoi_add_participant",
             "thenvoi_get_participants",
