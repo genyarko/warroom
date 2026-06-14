@@ -147,3 +147,51 @@ def test_loop_guard_resets_on_distinct_ids():
     assert all(r is not None for r in out)
     assert link.acked == []
     assert tracker.perm_failed == []
+
+
+# --- Fix 3: idempotent create_chatroom (anti duplicate-room split) ----------
+
+def _fake_orig_factory(counter):
+    async def fake_orig(self, task_id=None):
+        counter["n"] += 1
+        return f"room-{counter['n']}"
+    return fake_orig
+
+
+def test_create_chatroom_dedupes_rapid_duplicate():
+    import shared.sdk_patches as P
+    from thenvoi.runtime.tools import AgentTools
+    P.apply_sdk_patches()
+    counter = {"n": 0}
+    P._orig_create_chatroom = _fake_orig_factory(counter)
+    fake = types.SimpleNamespace()
+
+    async def run():
+        a = await AgentTools.create_chatroom(fake, "INC-C")
+        b = await AgentTools.create_chatroom(fake, "INC-C")  # within window
+        return a, b
+
+    a, b = asyncio.run(run())
+    assert a == "room-1" and b == "room-1"   # duplicate reused, not a new room
+    assert counter["n"] == 1                 # underlying create called once
+
+
+def test_create_chatroom_allows_new_room_after_window():
+    import shared.sdk_patches as P
+    from thenvoi.runtime.tools import AgentTools
+    P.apply_sdk_patches()
+    counter = {"n": 0}
+    P._orig_create_chatroom = _fake_orig_factory(counter)
+    fake = types.SimpleNamespace()
+
+    async def run():
+        a = await AgentTools.create_chatroom(fake, "INC-C")
+        # Backdate the stored timestamp so the dedup window has elapsed.
+        rid, ts = fake._wr_last_room
+        fake._wr_last_room = (rid, ts - (P._ROOM_DEDUP_SECONDS + 1))
+        b = await AgentTools.create_chatroom(fake, "INC-D")
+        return a, b
+
+    a, b = asyncio.run(run())
+    assert a == "room-1" and b == "room-2"   # genuinely new room allowed later
+    assert counter["n"] == 2

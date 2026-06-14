@@ -56,7 +56,12 @@ param(
     # loop on sign-offs instead of calling its action tools). Pass
     # -CommanderModel claude-sonnet-4-6 for a decisive, hands-off execution at
     # higher cost. Sets COMMANDER_MODEL for the launched Commander process.
-    [string]$CommanderModel = ""
+    [string]$CommanderModel = "",
+    # Override Triage's model for this run. Triage's context is tiny (just the
+    # alert), so a stronger model here is cheap and reliably completes the
+    # multi-step setup (create one room, add everyone, brief). Pass
+    # -TriageModel claude-sonnet-4-6. Sets TRIAGE_MODEL for the Triage process.
+    [string]$TriageModel = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -188,6 +193,10 @@ function Start-All {
     if ($CommanderModel) {
         $env:COMMANDER_MODEL = $CommanderModel
         Write-Host "[run_all] Commander model override: $CommanderModel" -ForegroundColor Cyan
+    }
+    if ($TriageModel) {
+        $env:TRIAGE_MODEL = $TriageModel
+        Write-Host "[run_all] Triage model override: $TriageModel" -ForegroundColor Cyan
     }
 
     $existing = Read-Pids

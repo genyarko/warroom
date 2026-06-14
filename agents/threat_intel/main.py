@@ -47,7 +47,9 @@ async def main() -> None:
     # Cost guards: cap per-call output + per-message tool-loop turns. Threat Intel
     # only runs a few domain tools (lookup_ioc per indicator, assess_spread_risk)
     # then sends, so a tighter recursion_limit is fine.
-    max_tokens = int(os.getenv("THREAT_INTEL_MAX_TOKENS", "1024"))
+    # Generous output cap (output tokens are a tiny fraction of cost; a tight cap
+    # only risks truncating the FINDING before the send). Env-overridable.
+    max_tokens = int(os.getenv("THREAT_INTEL_MAX_TOKENS", "4096"))
     recursion_limit = int(os.getenv("THREAT_INTEL_RECURSION_LIMIT", "15"))
     custom_section = PROMPT_PATH.read_text(encoding="utf-8")
 

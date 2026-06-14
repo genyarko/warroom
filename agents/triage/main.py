@@ -43,7 +43,10 @@ async def main() -> None:
     # busiest turn does ~9 tool calls (classify, create_chatroom, lookup_peers,
     # add_participant x4, send_message x2), so keep recursion_limit comfortably
     # above that; it only fires on a runaway loop.
-    max_tokens = int(os.getenv("TRIAGE_MAX_TOKENS", "1024"))
+    # Generous output cap: Triage's turn is multi-step (create room + ~5
+    # add_participant calls + the BRIEF), and output tokens are a tiny fraction of
+    # cost, so a tight cap only risks truncating recruitment. Env-overridable.
+    max_tokens = int(os.getenv("TRIAGE_MAX_TOKENS", "4096"))
     recursion_limit = int(os.getenv("TRIAGE_RECURSION_LIMIT", "25"))
     custom_section = PROMPT_PATH.read_text(encoding="utf-8")
 

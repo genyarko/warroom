@@ -34,6 +34,15 @@ logger = logging.getLogger("warroom.sdk_patches")
 # After this many consecutive identical /next results, treat it as a stuck loop.
 _LOOP_GUARD_THRESHOLD = 5
 
+# Repeat create_chatroom calls within this many seconds are treated as the same
+# incident room (Triage/LLMs sometimes call create_chatroom twice in one turn,
+# fragmenting the team across two rooms). New incidents are minutes+ apart, so a
+# short window de-dupes the quirk without blocking legitimate new rooms.
+import os
+import time as _time
+_ROOM_DEDUP_SECONDS = int(os.getenv("WARROOM_ROOM_DEDUP_SECONDS", "180"))
+_orig_create_chatroom = None  # set at patch time; swappable for tests
+
 _APPLIED = False
 
 
@@ -135,5 +144,29 @@ def apply_sdk_patches() -> None:
 
     ExecutionContext._get_next_message = _get_next_message
 
+    # --- Fix 3: idempotent create_chatroom (anti duplicate-room split) --------
+    # Triage (esp. gpt-4o) sometimes calls create_chatroom twice in one turn,
+    # creating two incident rooms and fragmenting the team (specialists briefed in
+    # room A, Commander ends up in room B). Within a short window, return the room
+    # already created instead of making a duplicate.
+    global _orig_create_chatroom
+    from thenvoi.runtime.tools import AgentTools
+    _orig_create_chatroom = AgentTools.create_chatroom
+
+    async def create_chatroom(self, task_id=None):
+        now = _time.monotonic()
+        last = getattr(self, "_wr_last_room", None)  # (room_id, monotonic_ts)
+        if last and (now - last[1]) < _ROOM_DEDUP_SECONDS:
+            logger.warning(
+                "Idempotent create_chatroom: reusing room %s (a duplicate "
+                "create within %ss was suppressed to avoid splitting the team)",
+                last[0], _ROOM_DEDUP_SECONDS)
+            return last[0]
+        room_id = await _orig_create_chatroom(self, task_id)
+        self._wr_last_room = (room_id, now)
+        return room_id
+
+    AgentTools.create_chatroom = create_chatroom
+
     _APPLIED = True
-    logger.info("band-sdk 0.2.11 ack-loop patches applied")
+    logger.info("band-sdk 0.2.11 ack-loop + idempotent-room patches applied")
