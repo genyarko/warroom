@@ -105,21 +105,23 @@ def test_injector_rest_endpoint_pattern():
     print("[OK] Injector uses the human API surface and mentions Triage")
 
 
-def test_triage_context_switching_prompt():
-    """Test that Triage's prompt correctly handles context switching (intake → incident room)."""
-    triage_prompt = (REPO_ROOT / "agents" / "triage" / "prompt.md").read_text(encoding="utf-8")
+def test_triage_deterministic_recruit_prompt():
+    """Triage's prompt reflects the deterministic-recruit model: create_chatroom
+    auto-recruits the team into the alert room; Triage does not add participants
+    itself (recruitment is handled in code by shared/sdk_patches.py)."""
+    triage_prompt = (REPO_ROOT / "agents" / "triage" / "prompt.md").read_text(encoding="utf-8").lower()
 
-    # Should mention that all messages post to the incident room, not the intake room
-    assert "incident room" in triage_prompt.lower(), "Prompt should mention incident room"
-    assert "bootstrap" in triage_prompt.lower() or "create" in triage_prompt.lower(), \
-        "Prompt should mention creating/bootstrapping"
+    # create_chatroom is described as the (auto-)recruiting setup step
+    assert "create_chatroom" in triage_prompt, "Prompt should mention create_chatroom"
+    assert "recruit" in triage_prompt, "Prompt should mention recruiting the team"
+    # The incident runs in the room where the alert arrived
+    assert "room where you received the alert" in triage_prompt, \
+        "Prompt should say the incident runs in the alert room"
+    # Recruitment is automatic — Triage must NOT be told to call add_participant
+    assert "thenvoi_add_participant" not in triage_prompt, \
+        "Triage should not call add_participant (recruitment is deterministic)"
 
-    # Should have a rule about context (intake room vs incident room)
-    rules_section = triage_prompt[triage_prompt.find("## Rules"):] if "## Rules" in triage_prompt else ""
-    assert "intake room" in rules_section.lower() or "incident room" in rules_section.lower(), \
-        "Rules section should clarify room context"
-
-    print("[OK] Triage prompt handles room context switching")
+    print("[OK] Triage prompt reflects deterministic auto-recruit model")
 
 
 def test_schema_consistency():

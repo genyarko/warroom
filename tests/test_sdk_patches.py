@@ -149,49 +149,45 @@ def test_loop_guard_resets_on_distinct_ids():
     assert tracker.perm_failed == []
 
 
-# --- Fix 3: idempotent create_chatroom (anti duplicate-room split) ----------
+# --- Fix 3: create_chatroom repurposed as deterministic recruiter ----------
 
-def _fake_orig_factory(counter):
-    async def fake_orig(self, task_id=None):
-        counter["n"] += 1
-        return f"room-{counter['n']}"
-    return fake_orig
+class _RecruitTools:
+    """Stands in for the room-bound AgentTools instance."""
+    def __init__(self):
+        self.room_id = "alert-room"
+        self.added = []
+
+    async def add_participant(self, identifier, role="member"):
+        self.added.append(identifier)
+        return {"id": identifier}
 
 
-def test_create_chatroom_dedupes_rapid_duplicate():
+def test_create_chatroom_recruits_team_into_current_room():
     import shared.sdk_patches as P
     from thenvoi.runtime.tools import AgentTools
     P.apply_sdk_patches()
-    counter = {"n": 0}
-    P._orig_create_chatroom = _fake_orig_factory(counter)
-    fake = types.SimpleNamespace()
+    team = ["@x/threat-intel", "@x/compliance", "@x/commander", "@x/facilitator"]
+    P._TEAM_CACHE = team
+    fake = _RecruitTools()
 
-    async def run():
-        a = await AgentTools.create_chatroom(fake, "INC-C")
-        b = await AgentTools.create_chatroom(fake, "INC-C")  # within window
-        return a, b
+    rid = asyncio.run(AgentTools.create_chatroom(fake, "WarRoom-INC-C"))
 
-    a, b = asyncio.run(run())
-    assert a == "room-1" and b == "room-1"   # duplicate reused, not a new room
-    assert counter["n"] == 1                 # underlying create called once
+    assert rid == "alert-room"          # returns the CURRENT room, not a new one
+    assert fake.added == team           # whole team recruited, deterministically
+    assert fake._wr_recruited is True
 
 
-def test_create_chatroom_allows_new_room_after_window():
+def test_create_chatroom_recruit_is_idempotent():
     import shared.sdk_patches as P
     from thenvoi.runtime.tools import AgentTools
     P.apply_sdk_patches()
-    counter = {"n": 0}
-    P._orig_create_chatroom = _fake_orig_factory(counter)
-    fake = types.SimpleNamespace()
+    P._TEAM_CACHE = ["@x/threat-intel", "@x/compliance"]
+    fake = _RecruitTools()
 
     async def run():
-        a = await AgentTools.create_chatroom(fake, "INC-C")
-        # Backdate the stored timestamp so the dedup window has elapsed.
-        rid, ts = fake._wr_last_room
-        fake._wr_last_room = (rid, ts - (P._ROOM_DEDUP_SECONDS + 1))
-        b = await AgentTools.create_chatroom(fake, "INC-D")
-        return a, b
+        await AgentTools.create_chatroom(fake)
+        await AgentTools.create_chatroom(fake)  # repeat call (gpt-4o duplicate)
+        return fake.added
 
-    a, b = asyncio.run(run())
-    assert a == "room-1" and b == "room-2"   # genuinely new room allowed later
-    assert counter["n"] == 2
+    added = asyncio.run(run())
+    assert added == ["@x/threat-intel", "@x/compliance"]  # added once, no dupes

@@ -34,16 +34,33 @@ logger = logging.getLogger("warroom.sdk_patches")
 # After this many consecutive identical /next results, treat it as a stuck loop.
 _LOOP_GUARD_THRESHOLD = 5
 
-# Repeat create_chatroom calls within this many seconds are treated as the same
-# incident room (Triage/LLMs sometimes call create_chatroom twice in one turn,
-# fragmenting the team across two rooms). New incidents are minutes+ apart, so a
-# short window de-dupes the quirk without blocking legitimate new rooms.
-import os
-import time as _time
-_ROOM_DEDUP_SECONDS = int(os.getenv("WARROOM_ROOM_DEDUP_SECONDS", "180"))
-_orig_create_chatroom = None  # set at patch time; swappable for tests
-
 _APPLIED = False
+
+# Cache of the standard incident-team handles (specialists + commander +
+# facilitator), loaded from agent_config. Used by the deterministic recruiter.
+_TEAM_CACHE: list[str] | None = None
+
+
+def _warroom_team() -> list[str]:
+    """Handles to recruit into an incident room (the human is already present in
+    the alert room on the free-tier paste flow, so it's not added here)."""
+    global _TEAM_CACHE
+    if _TEAM_CACHE is not None:
+        return _TEAM_CACHE
+    handles: list[str] = []
+    try:
+        from shared.config import load_agent
+        for role in ("threat_intel", "compliance", "commander", "facilitator"):
+            try:
+                h = load_agent(role).handle
+                if h:
+                    handles.append(h)
+            except Exception:  # noqa: BLE001 - role may be absent
+                pass
+    except Exception:  # noqa: BLE001
+        pass
+    _TEAM_CACHE = handles
+    return handles
 
 
 def _is_422(exc: Exception) -> bool:
@@ -144,29 +161,34 @@ def apply_sdk_patches() -> None:
 
     ExecutionContext._get_next_message = _get_next_message
 
-    # --- Fix 3: idempotent create_chatroom (anti duplicate-room split) --------
-    # Triage (esp. gpt-4o) sometimes calls create_chatroom twice in one turn,
-    # creating two incident rooms and fragmenting the team (specialists briefed in
-    # room A, Commander ends up in room B). Within a short window, return the room
-    # already created instead of making a duplicate.
-    global _orig_create_chatroom
+    # --- Fix 3: deterministic recruitment via create_chatroom ----------------
+    # Verified in the SDK: create_chatroom() makes an ORPHAN room —
+    # add_participant()/send_message() are hard-bound to self.room_id (the room
+    # where the agent received the message, which on the free-tier paste flow
+    # already contains the human). So the incident actually runs in self.room_id;
+    # the "created" rooms were never used, and they let gpt-4o Triage fragment the
+    # team. gpt-4o reliably CALLS create_chatroom but unreliably calls
+    # add_participant — so we repurpose create_chatroom: instead of an unused
+    # orphan, it deterministically recruits the standard team into the CURRENT
+    # room (idempotently) and returns self.room_id. Triage then only needs:
+    # classify -> create_chatroom (auto-recruits) -> post the BRIEF.
     from thenvoi.runtime.tools import AgentTools
-    _orig_create_chatroom = AgentTools.create_chatroom
 
     async def create_chatroom(self, task_id=None):
-        now = _time.monotonic()
-        last = getattr(self, "_wr_last_room", None)  # (room_id, monotonic_ts)
-        if last and (now - last[1]) < _ROOM_DEDUP_SECONDS:
-            logger.warning(
-                "Idempotent create_chatroom: reusing room %s (a duplicate "
-                "create within %ss was suppressed to avoid splitting the team)",
-                last[0], _ROOM_DEDUP_SECONDS)
-            return last[0]
-        room_id = await _orig_create_chatroom(self, task_id)
-        self._wr_last_room = (room_id, now)
-        return room_id
+        if getattr(self, "_wr_recruited", False):
+            return self.room_id  # idempotent: team already recruited
+        self._wr_recruited = True
+        added = []
+        for handle in _warroom_team():
+            try:
+                await self.add_participant(handle)
+                added.append(handle)
+            except Exception as e:  # noqa: BLE001 - already-present / lookup errors
+                logger.warning("Recruit: add_participant(%s) failed: %s", handle, e)
+        logger.info("Recruited incident team into room %s: %s", self.room_id, added)
+        return self.room_id
 
     AgentTools.create_chatroom = create_chatroom
 
     _APPLIED = True
-    logger.info("band-sdk 0.2.11 ack-loop + idempotent-room patches applied")
+    logger.info("band-sdk 0.2.11 ack-loop + deterministic-recruit patches applied")

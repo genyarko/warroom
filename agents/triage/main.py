@@ -59,16 +59,16 @@ async def main() -> None:
         additional_tools=langchain_tools(),
         # Allowlist (Phase 4) — PLATFORM tools only. include_tools filters the
         # built-in thenvoi_* tools; the domain tools in additional_tools above
-        # are merged unconditionally by the adapter and are NOT affected (so
-        # they must NOT be listed here, or the SDK logs "unknown tool" warnings).
-        # Triage: creates the incident room (create_chatroom), adds the CISO
-        # and specialists (add_participant), and messages them (send_message).
-        # NO remove_participant — Triage does not remove participants.
+        # are merged unconditionally by the adapter and are NOT affected.
+        # Triage's recruitment is now DETERMINISTIC: shared/sdk_patches.py
+        # repurposes thenvoi_create_chatroom to recruit the whole standard team
+        # into the current room in code (gpt-4o was unreliable at per-specialist
+        # add_participant calls and at avoiding duplicate rooms). So Triage only
+        # needs: classify -> create_chatroom (auto-recruits) -> send the BRIEF.
+        # add_participant / lookup_peers are intentionally NOT exposed.
         features=AdapterFeatures(include_tools=[
             "thenvoi_send_message",
             "thenvoi_create_chatroom",
-            "thenvoi_lookup_peers",
-            "thenvoi_add_participant",
             "thenvoi_get_participants",
         ]),
     )
