@@ -1,9 +1,8 @@
 """Fire a scripted alert at the Triage agent to kick off an incident.
 
-This is the demo's starting gun: it creates a temporary intake room containing
-Triage, posts a SOC-style alert into it @mentioning Triage, and exits. Triage
-reads the alert and creates the incident war room, recruiting the specialists
-it needs (see ``shared/protocol.md`` §E).
+This is the demo's starting gun: it posts a SOC-style alert to Triage,
+and exits. Triage reads the alert and creates the incident war room,
+recruiting the specialists it needs (see ``shared/protocol.md`` §E).
 
     python -m injector.inject_alert INC-C
     python -m injector.inject_alert INC-A
@@ -11,12 +10,15 @@ it needs (see ``shared/protocol.md`` §E).
 
 How it posts
 ------------
-The injector creates a fresh intake room, adds Triage as a participant, and
-posts the alert there. This requires a Band **user** API key in
-``BAND_INJECTOR_API_KEY`` (generate one in the Band UI; this is the SOC
-analyst's identity). Without a key, the injector prints the ready-to-paste
-message and the web-UI instructions instead — the validated manual fallback —
-and exits cleanly.
+**Note**: Band's free tier blocks human API access (creating rooms via user key).
+The injector falls back to printing the alert message for manual paste into Band.
+
+Automatic posting requires Band Enterprise tier. For demos, the manual fallback
+works: copy the printed alert, paste it into an intake room (or any room with
+Triage) in the Band UI, and Triage will read it and create the incident room.
+
+Running without BAND_INJECTOR_API_KEY or with --dry-run prints the ready-to-paste
+message and instructions.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ import sys
 from shared.config import load_agent
 from shared.mock_data import list_alerts, load_alert
 
-DEFAULT_BASE_URL = "https://app.thenvoi.com"  # SDK default; agents use the same
+DEFAULT_BASE_URL = "https://app.band.ai"  # Verified in Phase 0; see shared/protocol.md §A.0
 
 
 def build_alert_message(incident: str) -> tuple[str, dict]:
@@ -57,45 +59,37 @@ def _post_via_rest(content: str, triage, api_key: str, base_url: str) -> str:
     """Create intake room with Triage, add Triage as participant, post alert.
 
     Returns the intake room ID (for reference only; the demo doesn't need it).
-    Uses the human API (POST /me/chats, POST /me/chats/{id}/participants, etc.)
-    since the injector uses a human (SOC analyst) API key.
+    Uses the Band SDK's RestClient for proper request serialization.
     """
-    import json
-    from urllib.request import Request, urlopen
-    from urllib.error import URLError
+    from thenvoi_rest import RestClient
+    from thenvoi_rest.human_api_chats.types import (
+        CreateMyChatRoomRequestChat,
+    )
+    from thenvoi_rest.types import ChatMessageRequest
 
-    def _rest_call(method: str, endpoint: str, payload: dict | None = None) -> dict:
-        """Make a REST call to the Band API."""
-        url = f"{base_url}/api/v1{endpoint}"
-        headers = {
-            "X-API-Key": api_key,
-            "Content-Type": "application/json",
-        }
-        req = Request(url, method=method, headers=headers)
-        if payload:
-            req.data = json.dumps(payload).encode("utf-8")
-        try:
-            with urlopen(req) as resp:
-                return json.loads(resp.read().decode("utf-8")) if resp.status < 300 else {}
-        except URLError as e:
-            raise RuntimeError(f"REST call {method} {endpoint} failed: {e}") from e
+    client = RestClient(api_key=api_key, base_url=base_url)
 
-    # Create intake room (human endpoint)
-    room_data = _rest_call("POST", "/me/chats", {"name": "WarRoom Intake (Triage kickoff)"})
-    room_id = room_data.get("id")
-    if not room_id:
-        raise RuntimeError(f"Failed to create room: {room_data}")
+    # Create intake room
+    chat_req = CreateMyChatRoomRequestChat(name="WarRoom Intake (Triage kickoff)")
+    room_resp = client.human_api_chats.create_my_chat_room(chat=chat_req)
+    room_id = room_resp.id
 
     # Add Triage as a participant to the intake room
-    _rest_call("POST", f"/me/chats/{room_id}/participants",
-               {"agent_id": triage.agent_id})
+    client.human_api_chats.add_participant(
+        chat_id=room_id,
+        agent_id=triage.agent_id,
+    )
 
     # Post alert @mentioning Triage
     handle = (triage.handle or "@merolavtech/triage").lstrip("@")
-    _rest_call("POST", f"/me/chats/{room_id}/messages", {
-        "content": content,
-        "mentions": [{"id": triage.agent_id, "handle": handle, "name": "triage"}],
-    })
+    msg_req = ChatMessageRequest(
+        content=content,
+        mentions=[{"id": triage.agent_id, "handle": handle, "name": "triage"}],
+    )
+    client.human_api_messages.send_my_chat_message(
+        chat_id=room_id,
+        message=msg_req,
+    )
 
     return room_id
 
@@ -135,8 +129,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         room_id = _post_via_rest(content, triage, api_key, base_url)
     except Exception as e:  # noqa: BLE001 — surface any REST/auth error clearly
-        print(f"[injector] POST failed: {type(e).__name__}: {e}", file=sys.stderr)
-        print("[injector] Falling back to manual paste:\n")
+        # Human API requires Enterprise tier; fall back to manual paste
+        if "Enterprise plan" in str(e) or "plan_required" in str(e):
+            print("[injector] Band free tier blocks human API (room creation).")
+            print("[injector] Please use the manual paste method:\n")
+        else:
+            print(f"[injector] POST failed: {type(e).__name__}: {e}", file=sys.stderr)
+            print("[injector] Falling back to manual paste:\n")
         print(content)
         return 1
 
