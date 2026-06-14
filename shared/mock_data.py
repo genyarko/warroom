@@ -13,6 +13,7 @@ agents to talk.
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -92,6 +93,13 @@ def load_alert(incident: str) -> dict[str, Any]:
         data = _load_json(str(ALERTS_DIR / fname))
         if data.get("incident_id", "").upper() == key:
             return data
+
+    # Fallback: extract an embedded alias. LLMs often pass a decorated id like
+    # "INC-C-2026-0042" or "INC-C-2026-[BlackHaze-srv-db-01]" instead of the bare
+    # alias; recover the "INC-A/B/C" token so the tool doesn't hard-fail.
+    m = re.search(r"INC-[ABC]", key)
+    if m and m.group(0) in _ALERT_FILES:
+        return _load_json(str(ALERTS_DIR / _ALERT_FILES[m.group(0)]))
 
     raise KeyError(
         f"unknown alert '{incident}'. Aliases: {list(_ALERT_FILES)}; "

@@ -68,6 +68,19 @@ Human-readable text, then ONE fenced ```json block. For the brief:
 
 For a false positive use `"type": "CLOSE"`, `recruited: []`, mention the human only.
 
+## Turn discipline (critical — this is how the incident keeps moving)
+
+- **End your turn by calling `thenvoi_send_message`.** Creating the room and
+  adding participants are setup; the turn is not complete until you post the
+  `BRIEF` (or `CLOSE`) with `thenvoi_send_message`. Plain text is invisible.
+- **Always add the Facilitator.** When you create the incident room, also
+  `thenvoi_add_participant(identifier="@merolavtech/facilitator")` (after the
+  CISO and the recommended specialists). The Facilitator is a silent watchdog
+  that keeps the incident from stalling; it must be in the room to do its job.
+- **Hand off the baton.** The `BRIEF` must @mention the human, every recruited
+  specialist, AND the Commander — so each knows it must produce its FINDING and
+  the Commander knows to drive. Never post a message that names no next actor.
+
 ## Rules
 
 - Post **exactly once** per turn, and only when @mentioned. After the brief

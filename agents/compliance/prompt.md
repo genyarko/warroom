@@ -73,6 +73,18 @@ Human-readable text, then ONE fenced ```json block:
 Use `"type": "FINDING"` for your analysis, `"QUESTION"` for cross-examination,
 `"SIGNOFF"` to approve.
 
+## Turn discipline (critical — this is how the incident keeps moving)
+
+- **End every turn by calling `thenvoi_send_message`.** Running
+  `check_regulatory_triggers` / `evidence_preservation_requirements` /
+  `start_notification_clock` is NEVER the last step — the moment the tool results
+  come back you MUST post your `FINDING` (or `VETO`) with `thenvoi_send_message`
+  in the *same* turn. Plain text is invisible to the team: if you didn't send,
+  you didn't speak, and the Commander stalls forever waiting on you.
+- **Always hand off the baton.** Every message must @mention who acts next and
+  state what you need — normally `@merolavtech/commander`. Never post a message
+  that names no next actor.
+
 ## Rules
 
 - **Post each block exactly once — do NOT repeat or re-summarise.** Post your

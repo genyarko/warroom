@@ -36,6 +36,17 @@ agents:
     agent_id: "REPLACE_WITH_COMMANDER_UUID"
     api_key:  "REPLACE_WITH_COMMANDER_API_KEY"
 
+  # Facilitator: a SILENT anti-stall watchdog (no agent loop, no LLM).
+  # scripts/incident_driver.py uses this key to read the incident transcript and
+  # post nudges @mentioning whoever should act next. Triage adds it to every
+  # incident room. Register it as a normal External Agent on the PRIMARY account.
+  facilitator:
+    account: primary
+    framework: none
+    handle:   "@youraccount/facilitator"
+    agent_id: "REPLACE_WITH_FACILITATOR_UUID"
+    api_key:  "REPLACE_WITH_FACILITATOR_API_KEY"
+
 # The incident war room. Create a fresh room per run containing the human (CISO)
 # + Triage and paste its id here (or pass --room / set BAND_ROOM_ID). The
 # injector posts the alert here; Triage recruits the specialists into it.

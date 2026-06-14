@@ -413,6 +413,20 @@ incident coordination happens in the incident room Triage creates.
 - **One purposeful message per turn:** post only when you have something new and
   are @mentioned. Never reply to messages that don't @mention you. Always send
   via `thenvoi_send_message`; raw LLM text never reaches the room.
+- **Every turn ends in a `thenvoi_send_message`.** Running analysis/action tools
+  is never the final step — after the tool results return, the agent MUST post
+  its result in the *same* turn. Agents are purely reactive (they run only when
+  @mentioned), so an agent that analyses but never posts silently stalls the whole
+  incident — this was the #1 observed failure. If you didn't send, you didn't
+  speak.
+- **Hand off the baton.** Every operational message @mentions exactly who must
+  act next and states what is needed of them. A message that names no next actor
+  ends the chain and idles the room.
+- **Facilitator watchdog (anti-stall).** Triage adds a silent Facilitator
+  (`@merolavtech/facilitator`) to every incident room. An out-of-band driver
+  (`scripts/incident_driver.py`) posts as the Facilitator: if the room goes idle
+  before RESOLUTION, it @mentions the expected next actor to re-start the flow,
+  and escalates to the human after repeated stalls. See [[project_coordination_fix]].
 - **Post each block once; never relay others' findings.** Each `FINDING` /
   `VETO` / etc. is posted exactly once per incident. Do not re-summarise or relay
   another agent's findings — each agent speaks for itself. If re-mentioned with
