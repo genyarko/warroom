@@ -84,6 +84,55 @@ def test_build_report_has_all_sections_and_highlights_human():
     assert "It **is** the incident" in report
 
 
+def test_kickoff_alert_is_not_mislabeled_as_ciso_ruling():
+    """The human's first message is the alert, not a ruling — it must appear as
+    an ALERT (no HUMAN RULING badge), while a later human decision is the ruling."""
+    msgs = [
+        _m("@triage *** NEW SECURITY ALERT *** INC-C-2026-0042\nTriage this incident.",
+           sender_name="George N", sender_type="User", ts="2026-06-14T10:00:00"),
+        _m(_block({"type": "ESCALATION", "incident": "INC-C-2026-0042",
+                   "summary": "Wipe needs your authorization."}),
+           sender_name="Commander", ts="2026-06-14T10:03:00"),
+        _m("Authorize the wipe after imaging.", sender_name="George N",
+           sender_type="User", ts="2026-06-14T10:04:00"),
+    ]
+    report, _incident, _alias = build_report(msgs, [], [], room_id="r")
+    # the alert shows as ALERT, not a ruling
+    assert "ALERT — George N" in report
+    # exactly one HUMAN RULING badge — the genuine post-escalation decision
+    assert report.count("HUMAN RULING") == 1
+    assert "Authorize the wipe after imaging" in report
+
+
+def test_prose_fallback_recovers_severity_incident_and_findings():
+    """When agents post prose with NO json block, the report still recovers
+    severity + incident id from the classify_alert tool-result and picks up
+    **bold** protocol markers as timeline events."""
+    # classify_alert tool-result as it appears in the merged transcript (escaped).
+    classify = ('{"event": "on_tool_end", "data": {"output": "content=\'{\\\\n  '
+                '\\"incident_id\\": \\"INC-A-2026-0039\\",\\\\n  \\"severity\\": '
+                '\\"medium\\",\\\\n  \\"category\\": \\"malware\\"}\'"}}')
+    msgs = [
+        _m(classify, sender_name="triage", message_type="tool_result",
+           ts="2026-06-14T10:00:00"),
+        # specialist FINDING in prose with a bold marker, no json block
+        _m("**FINDING** GreyLoader is commodity malware; isolate + image ws-eng-014.",
+           sender_name="Threat Intel", ts="2026-06-14T10:01:00"),
+        # a Commander beat that exists BOTH as a json block and bold prose — must
+        # not be double-counted
+        _m(_block({"type": "RESOLUTION", "incident": "INC-A-2026-0039",
+                   "summary": "Contained."}), sender_name="Commander",
+           ts="2026-06-14T10:02:00"),
+        _m("**RESOLUTION** Contained and closed.", sender_name="Commander",
+           ts="2026-06-14T10:03:00"),
+    ]
+    report, incident, alias = build_report(msgs, [], [], room_id="r")
+    assert incident == "INC-A-2026-0039" and alias == "INC-A"   # from classify, not a block
+    assert "**Severity:** medium" in report                      # recovered from classify
+    assert "FINDING — Threat Intel" in report                    # prose marker picked up
+    assert report.count("RESOLUTION — Commander") == 1           # json + prose deduped
+
+
 def test_build_report_handles_open_incident_and_no_clocks():
     msgs = [_m(_block({"type": "BRIEF", "incident": "INC-A-2026-0039",
                        "severity": "medium", "summary": "Trojan on ws-eng-014."}),

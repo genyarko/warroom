@@ -87,6 +87,14 @@ Use `"type": "FINDING"` for your analysis, `"QUESTION"` for cross-examination,
 
 ## Turn discipline (critical — this is how the incident keeps moving)
 
+- **The fenced ```json block is mandatory — prose alone does not count.** The
+  `content` you pass to `thenvoi_send_message` MUST be your human-readable text
+  (including the verbatim `⏱` clock line) **followed by the ONE fenced ```json
+  block** from *Message format* above (your `FINDING` / `VETO` / `QUESTION` /
+  `SIGNOFF`, with its `type`). A message with no json block is invisible to the
+  Commander's parser, the Facilitator watchdog, and the audit-trail report — it is
+  NOT recorded as a finding or veto, so the incident reads as if you never spoke.
+  Never send a message without its typed json block.
 - **End every turn by calling `thenvoi_send_message`.** Running
   `check_regulatory_triggers` / `evidence_preservation_requirements` /
   `start_notification_clock` is NEVER the last step — the moment the tool results

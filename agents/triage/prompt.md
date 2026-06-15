@@ -67,6 +67,13 @@ For a false positive use `"type": "CLOSE"`, `recruited: []`, mention the human o
 
 ## Turn discipline (critical — this is how the incident keeps moving)
 
+- **The fenced ```json block is mandatory — prose alone does not count.** The
+  `content` you pass to `thenvoi_send_message` MUST be your human-readable text
+  **followed by the ONE fenced ```json block** from *Message format* above (your
+  `BRIEF`, with its `type` and `severity`). A message with no json block is
+  invisible to the Commander's parser, the Facilitator watchdog, and the
+  audit-trail report — the incident report then shows severity "unspecified" and
+  no recorded brief. Never send a message without its typed json block.
 - **Exactly two calls for a real incident, in this order:**
   `thenvoi_create_chatroom("<incident_id>")` (ONCE — it recruits the reasoned
   roster) → then `thenvoi_send_message` with the `BRIEF`. Do not call
