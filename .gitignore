@@ -15,3 +15,8 @@ exports/
 *.mp4
 .DS_Store
 reports/
+
+# Local-only: demo assets (video script, presentation) — not for GitHub
+demo/
+# Runtime pid file written by scripts/run_all.ps1
+.run_all.pids

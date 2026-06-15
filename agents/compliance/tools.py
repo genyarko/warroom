@@ -28,7 +28,7 @@ from typing import Any
 from pydantic_ai import RunContext
 
 from shared import reg_clock
-from shared.mock_data import get_asset, load_alert, load_reg_rules
+from shared.mock_data import get_asset, list_alerts, load_alert, load_reg_rules
 
 _INC_RE = re.compile(r"INC-[ABC]", re.IGNORECASE)
 
@@ -40,9 +40,36 @@ def _norm_incident(incident: str) -> str:
     return m.group(0).upper() if m else str(incident or "")
 
 
-def _affected_data_classes(incident: str) -> tuple[str, list[str]]:
-    """(asset_id, data_classes) for the host named in an incident's alert."""
-    alert = load_alert(incident)
+def _resolve_alert(incident: str) -> dict[str, Any] | None:
+    """Resolve an alert from an incident alias/id OR the affected asset id.
+
+    The Compliance LLM sometimes passes the host (e.g. 'srv-db-01') or a free-text
+    paraphrase instead of the incident alias. Recover instead of raising — a raise
+    here propagates out of the tool, fails the whole message, and stalls the
+    incident (observed: Compliance never started the clock / posted its veto).
+    """
+    try:
+        return load_alert(incident)
+    except (KeyError, FileNotFoundError):
+        pass
+    # Maybe they passed the affected asset id — find the alert that names it.
+    arg = str(incident or "").strip().lower()
+    for fname in list_alerts():
+        try:
+            data = load_alert(fname)
+        except (KeyError, FileNotFoundError):
+            continue
+        if str(data.get("asset_id", "")).lower() == arg:
+            return data
+    return None
+
+
+def _affected_data_classes(incident: str) -> tuple[str | None, list[str]]:
+    """(asset_id, data_classes) for the host named in an incident's alert, or
+    ``(None, [])`` if the incident arg can't be resolved."""
+    alert = _resolve_alert(incident)
+    if alert is None:
+        return None, []
     asset_id = alert.get("asset_id", "")
     asset = get_asset(asset_id)
     return asset_id, (asset.get("data_classes", []) if asset else [])
@@ -56,6 +83,15 @@ def check_regulatory_triggers(incident: str) -> dict[str, Any]:
     match.
     """
     asset_id, data_classes = _affected_data_classes(incident)
+    if asset_id is None:
+        return {
+            "incident": incident,
+            "triggered": [],
+            "error": (f"could not resolve incident '{incident}'. Re-call with the "
+                      "incident alias (INC-A / INC-B / INC-C) or its full id — not a "
+                      "free-text description or the host name alone."),
+            "summary": f"Unresolved incident '{incident}'; re-call with the INC alias.",
+        }
     dc = set(data_classes)
 
     triggered = []

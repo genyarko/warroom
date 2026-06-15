@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from shared.mock_data import get_asset, load_assets, load_iocs
+from shared.mock_data import get_asset, load_alert, load_assets, load_iocs
 
 # Segments whose compromise implies a large blast radius (domain-wide creds,
 # production data, core services).
@@ -120,11 +120,54 @@ def assess_spread_risk(asset_id: str) -> dict[str, Any]:
     }
 
 
+def analyze_incident(incident: str) -> dict[str, Any]:
+    """One-call incident analysis keyed on the incident id — the deterministic path.
+
+    Resolves the alert's **literal** indicators + asset_id from the alert data
+    (by id/alias), runs ``lookup_ioc`` on every indicator and ``assess_spread_risk``
+    on the asset, and returns the combined dossier. Threat Intel calls this with
+    just the incident id (e.g. "INC-A"), which is reliably carried in the BRIEF —
+    so the analysis never depends on copying hashes or asset ids out of prose. This
+    closes the failure mode where the agent invented placeholder tool arguments
+    (e.g. ``lookup_ioc("commodity_trojan_indicator")``) from a paraphrased brief.
+    """
+    try:
+        alert = load_alert(incident)
+    except (KeyError, FileNotFoundError) as e:
+        return {"found": False, "incident": incident, "error": str(e)}
+
+    indicators = alert.get("indicators", []) or []
+    asset_id = alert.get("asset_id")
+    ioc_results = [lookup_ioc(ind) for ind in indicators]
+    spread = (assess_spread_risk(asset_id) if asset_id
+              else {"found": False, "error": "no asset_id in alert"})
+    matched = [r for r in ioc_results if r.get("matched")]
+
+    return {
+        "found": True,
+        "incident_id": alert.get("incident_id", incident),
+        "asset_id": asset_id,
+        "indicators_analyzed": indicators,
+        "ioc_results": ioc_results,
+        "matched_iocs": matched,
+        "spread_risk": spread,
+        "summary": (
+            f"{len(matched)}/{len(indicators)} indicator(s) matched the IOC DB; "
+            f"spread_risk={spread.get('spread_risk', 'unknown')}, "
+            f"eradication_requires_reimage="
+            f"{spread.get('eradication_requires_reimage', False)}."
+        ),
+    }
+
+
 # --- Framework wiring ------------------------------------------------------
 
 def langchain_tools() -> list[Any]:
     """LangChain StructuredTools for the LangGraph adapter (additional_tools)."""
     from langchain_core.tools import StructuredTool
+
+    def analyze_incident_tool(incident: str) -> str:
+        return json.dumps(analyze_incident(incident), indent=2, default=str)
 
     def lookup_ioc_tool(indicator: str) -> str:
         return json.dumps(lookup_ioc(indicator), indent=2, default=str)
@@ -133,6 +176,18 @@ def langchain_tools() -> list[Any]:
         return json.dumps(assess_spread_risk(asset_id), indent=2, default=str)
 
     return [
+        StructuredTool.from_function(
+            analyze_incident_tool,
+            name="analyze_incident",
+            description=(
+                "PRIMARY tool — call this FIRST with just the incident id/alias "
+                "(e.g. 'INC-A' or 'INC-A-2026-0039'). It resolves the alert's real "
+                "indicators and asset_id internally and returns the full dossier: "
+                "every IOC lookup, the matched threat actor/malware, and the host "
+                "spread-risk assessment. Do NOT type out hashes or asset ids "
+                "yourself — pass only the incident id and read the result."
+            ),
+        ),
         StructuredTool.from_function(
             lookup_ioc_tool,
             name="lookup_ioc",

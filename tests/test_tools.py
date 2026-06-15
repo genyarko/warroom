@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 from shared import mock_data
 from agents.triage.tools import classify_alert, lookup_asset
-from agents.threat_intel.tools import assess_spread_risk, lookup_ioc
+from agents.threat_intel.tools import analyze_incident, assess_spread_risk, lookup_ioc
 from agents.compliance.tools import (
     check_regulatory_triggers,
     evidence_preservation_requirements,
@@ -87,6 +87,34 @@ def test_lookup_ioc_match_and_miss():
     assert lookup_ioc("10.0.0.255")["matched"] is False
 
 
+def test_analyze_incident_resolves_literals_by_id():
+    """The structural fix: analyze_incident sources the REAL indicators + asset
+    from the alert keyed only on the incident id — no transcribing by the LLM.
+    INC-A's indicators must match the IOC DB (was failing when the agent invented
+    placeholder args like 'commodity_trojan_indicator')."""
+    out = analyze_incident("INC-A")
+    assert out["found"] is True
+    assert out["asset_id"] == "ws-eng-014"
+    # the literal indicators came from the alert, not from prose
+    assert any("7c1f9b44" in ind for ind in out["indicators_analyzed"])
+    # and they actually resolve against the IOC DB / asset inventory
+    assert out["spread_risk"]["found"] is True
+    assert out["matched_iocs"], "INC-A indicators should match the IOC DB"
+    # decorated / full ids resolve too (alias extraction)
+    assert analyze_incident("INC-C-2026-0042")["asset_id"] == "srv-db-01"
+
+
+def test_analyze_incident_inc_c_flags_reimage():
+    out = analyze_incident("INC-C")
+    assert out["spread_risk"]["eradication_requires_reimage"] is True
+    assert out["matched_iocs"]                      # BlackHaze indicators match
+
+
+def test_analyze_incident_unknown_id_is_graceful():
+    out = analyze_incident("INC-ZZZ")
+    assert out["found"] is False and "error" in out
+
+
 def test_assess_spread_risk_differentiates():
     pii = assess_spread_risk("srv-db-01")
     assert pii["spread_risk"] in ("high", "critical")
@@ -125,7 +153,28 @@ def test_regulatory_triggers_inc_a_none():
     assert r["triggered"] == []
 
 
-def test_notification_clock_72h():
+def test_regulatory_triggers_resolves_by_asset_id():
+    """Compliance sometimes passes the host (e.g. 'srv-db-01') instead of the
+    incident alias. The tool must resolve it to the same triggers as 'INC-C',
+    not raise (a raise failed the message and stalled the incident)."""
+    by_asset = check_regulatory_triggers("srv-db-01")
+    by_alias = check_regulatory_triggers("INC-C")
+    assert {t["rule_id"] for t in by_asset["triggered"]} == \
+           {t["rule_id"] for t in by_alias["triggered"]}
+    assert by_asset["triggered"], "asset-id resolution should still find obligations"
+
+
+def test_regulatory_triggers_unresolvable_is_graceful():
+    """A free-text paraphrase must NOT raise — it returns an error dict so the
+    agent can retry, instead of failing the whole message."""
+    r = check_regulatory_triggers("INCIDENT-BlackHaze-Ransomware")
+    assert r["triggered"] == [] and "error" in r
+
+
+def test_notification_clock_72h(tmp_path, monkeypatch):
+    # Isolate the persisted clock store so a live demo run's regulatory_clocks.json
+    # (idempotent, fixed deadline) can't bleed into this test. Mirrors test_reg_clock.
+    monkeypatch.setenv("REG_CLOCK_PATH", str(tmp_path / "clocks.json"))
     now = datetime(2026, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
     clock = start_notification_clock("GDPR-ART-33", "INC-C", now=now)
     assert clock["started"] is True
@@ -190,7 +239,8 @@ def test_framework_builders_produce_named_tools():
     from thenvoi.runtime.custom_tools import get_custom_tool_name
 
     assert {t.name for t in triage_lc()} == {"classify_alert", "lookup_asset"}
-    assert {t.name for t in intel_lc()} == {"lookup_ioc", "assess_spread_risk"}
+    assert {t.name for t in intel_lc()} == {"analyze_incident", "lookup_ioc",
+                                             "assess_spread_risk"}
     assert {f.__name__ for f in pydantic_ai_tools()} == {
         "check_regulatory_triggers", "start_notification_clock",
         "regulatory_clock_status", "evidence_preservation_requirements"}
